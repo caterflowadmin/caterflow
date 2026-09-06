@@ -213,6 +213,39 @@ async function resolveDuplicateKeyConflict(
   const existingByAlt = await collection.findOne(altQuery);
   if (!existingByAlt) return false;
 
+  // This is a genuine duplicate business number — two *different* Sanity
+  // documents (different _sanityId) both landed on the same poNumber/
+  // dispatchNumber/etc, most likely from a historical double-submit before
+  // the number was assigned server-side. Only one can occupy this unique
+  // slot in the archive, so keep whichever one's underlying Sanity data was
+  // actually edited more recently, rather than whichever happens to be
+  // processed later in this run's _id-ordered cursor — that ordering has no
+  // relationship to which document reflects the current, correct state.
+  if (existingByAlt._sanityId && existingByAlt._sanityId !== payload._sanityId) {
+    const incomingUpdatedAt = payload._sanityUpdatedAt
+      ? new Date(payload._sanityUpdatedAt).getTime()
+      : 0;
+    const existingUpdatedAt = existingByAlt._sanityUpdatedAt
+      ? new Date(existingByAlt._sanityUpdatedAt).getTime()
+      : 0;
+
+    if (existingUpdatedAt > incomingUpdatedAt) {
+      try {
+        progress?.({
+          skippedItem: {
+            collection: collection.collectionName || null,
+            reason: "older_duplicate_number",
+            label: getArchivePayloadLabel(payload),
+            message: `Skipped ${getArchivePayloadLabel(payload)} — a more recently updated document already occupies this number`,
+          },
+        });
+      } catch (e) {
+        /* ignore */
+      }
+      return true;
+    }
+  }
+
   await collection.replaceOne(
     { _id: existingByAlt._id },
     {
@@ -306,8 +339,10 @@ export async function insertIfNotExists(
     delete (existingComparable as any)._id;
     delete (existingComparable as any)._archivedAt;
     delete (existingComparable as any)._lastSyncedAt;
+    delete (existingComparable as any)._sanityUpdatedAt;
     delete (payloadComparable as any)._archivedAt;
     delete (payloadComparable as any)._lastSyncedAt;
+    delete (payloadComparable as any)._sanityUpdatedAt;
 
     if (
       stableSerialize(existingComparable) === stableSerialize(payloadComparable)
@@ -430,8 +465,10 @@ export async function insertIfNotExists(
           delete (existingComparable as any)._id;
           delete (existingComparable as any)._archivedAt;
           delete (existingComparable as any)._lastSyncedAt;
+          delete (existingComparable as any)._sanityUpdatedAt;
           delete (payloadComparable as any)._archivedAt;
           delete (payloadComparable as any)._lastSyncedAt;
+          delete (payloadComparable as any)._sanityUpdatedAt;
 
           if (
             stableSerialize(existingComparable) ===
@@ -723,6 +760,14 @@ async function archiveTypeBatched(options: {
       _sanityId: d._id,
       _isArchived: true,
       _archivedAt: new Date().toISOString(),
+      // sanitizeForMongo() strips the raw _updatedAt (deliberately excluded
+      // from content-equality comparisons — see insertIfNotExists). Carried
+      // through under a different name so a genuine duplicate business
+      // number (two different Sanity documents, not a resumed re-fetch of
+      // the same one) can be resolved by keeping whichever is actually the
+      // more recently edited Sanity document, not just whichever happens to
+      // be processed later.
+      _sanityUpdatedAt: d._updatedAt || d._createdAt || null,
     }));
 
     const errorsBefore = options.errors.length;
@@ -779,7 +824,7 @@ async function archiveDispatchLogs(
     name: "DispatchLogs",
     filter: `_type == "DispatchLog" && dispatchDate < $cutoff && !(evidenceStatus in ["pending", "partial"])`,
     projection: `
-            _id, _type, _createdAt, dispatchNumber, dispatchDate, evidenceStatus, status,
+            _id, _type, _createdAt, _updatedAt, dispatchNumber, dispatchDate, evidenceStatus, status,
             peopleFed, totalCost, costPerPerson, sellingPrice, totalSales, notes,
             "dispatchType": dispatchType->{_id, name, description, defaultTime, sellingPrice},
             "sourceSite": sourceSite->{_id, name, location, code},
@@ -815,7 +860,7 @@ async function archivePurchaseOrders(
     name: "PurchaseOrders",
     filter: `_type == "PurchaseOrder" && orderDate < $cutoff && !(status in ["draft", "pending-approval"])`,
     projection: `
-            _id, _type, _createdAt, poNumber, orderDate, status, totalAmount, notes,
+            _id, _type, _createdAt, _updatedAt, poNumber, orderDate, status, totalAmount, notes,
             evidenceStatus, approvedAt,
             "site": site->{_id, name, location},
             "orderedBy": orderedBy->{_id, name, email},
@@ -851,7 +896,7 @@ async function archiveGoodsReceipts(
     name: "GoodsReceipts",
     filter: `_type == "GoodsReceipt" && receiptDate < $cutoff && !(evidenceStatus in ["pending", "partial"])`,
     projection: `
-            _id, _type, _createdAt, receiptNumber, receiptDate, status, evidenceStatus, notes,
+            _id, _type, _createdAt, _updatedAt, receiptNumber, receiptDate, status, evidenceStatus, notes,
             completedAt,
             "purchaseOrder": purchaseOrder->{
                 _id, poNumber, status, orderDate, totalAmount,
@@ -895,7 +940,7 @@ async function archiveInternalTransfers(
     name: "InternalTransfers",
     filter: `_type == "InternalTransfer" && transferDate < $cutoff && !(status in ["draft", "pending-approval"])`,
     projection: `
-            _id, _type, _createdAt, transferNumber, transferDate, status, notes,
+            _id, _type, _createdAt, _updatedAt, transferNumber, transferDate, status, notes,
             approvedAt,
             "fromBin": fromBin->{_id, name, "site": site->{_id, name}},
             "toBin": toBin->{_id, name, "site": site->{_id, name}},
@@ -929,7 +974,7 @@ async function archiveStockAdjustments(
     name: "StockAdjustments",
     filter: `_type == "StockAdjustment" && adjustmentDate < $cutoff && !(evidenceStatus in ["pending", "partial"])`,
     projection: `
-            _id, _type, _createdAt, adjustmentNumber, adjustmentDate, adjustmentType,
+            _id, _type, _createdAt, _updatedAt, adjustmentNumber, adjustmentDate, adjustmentType,
             evidenceStatus, notes,
             "adjustedBy": adjustedBy->{_id, name, email},
             "bin": bin->{_id, name, "site": site->{_id, name}},
@@ -960,7 +1005,7 @@ async function archiveInventoryCounts(
     name: "InventoryCounts",
     filter: `_type == "InventoryCount" && countDate < $cutoff && !(status in ["draft", "in-progress"])`,
     projection: `
-            _id, _type, _createdAt, countNumber, countDate, status, notes,
+            _id, _type, _createdAt, _updatedAt, countNumber, countDate, status, notes,
             "countedBy": countedBy->{_id, name, email},
             "bin": bin->{_id, name, "site": site->{_id, name}},
             "countedItems": countedItems[]{
