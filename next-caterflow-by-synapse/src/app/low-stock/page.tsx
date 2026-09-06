@@ -582,7 +582,6 @@ export default function LowStockPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          poNumber: `PO-${Date.now()}`,
           orderDate: new Date().toISOString(),
           orderedBy: user?.id,
           orderedItems: items,

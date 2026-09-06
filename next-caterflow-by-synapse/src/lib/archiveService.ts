@@ -371,9 +371,15 @@ export async function insertIfNotExists(
           })),
         );
       }
-      errors.push(
-        `Bulk write failed for ${collectionName}: ${err?.message || err} — falling back to per-document writes`,
-      );
+      // NOTE: this used to unconditionally `errors.push(...)` right here,
+      // before even attempting the per-document fallback below. Every
+      // consumer of these errors keys the whole run's success/failure off
+      // errors.length (see runArchive()/route.ts), so a bulk write hitting
+      // a transient conflict — e.g. a duplicate-key collision on one
+      // document — flipped the ENTIRE run to "failed" even when the
+      // fallback loop went on to recover every single document without
+      // any actual data loss. Only record a real error below if the
+      // fallback itself couldn't recover something.
 
       // Fallback to single-document writes for robustness.
       inserted = 0;
@@ -499,6 +505,10 @@ export async function insertIfNotExists(
       if (failedDocs > 0) {
         console.error(
           `❌ ${failedDocs}/${docs.length} document(s) in ${collectionName} failed to archive even after per-document fallback — see errors above and in the run's errors list.`,
+        );
+      } else {
+        console.warn(
+          `⚠️ Bulk write for ${collectionName} hit a conflict but all ${docs.length} document(s) were recovered via per-document fallback — not treating this run as failed.`,
         );
       }
     }

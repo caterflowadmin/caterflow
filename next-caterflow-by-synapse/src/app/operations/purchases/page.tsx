@@ -373,7 +373,6 @@ export default function PurchasesPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          poNumber: `PO-${Date.now()}`,
           orderDate: new Date().toISOString(),
           orderedBy: user?.id,
           orderedItems: items,
