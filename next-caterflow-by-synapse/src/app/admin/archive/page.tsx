@@ -107,6 +107,16 @@ interface ArchiveCurrentRun {
   logs: string[];
 }
 
+interface CleanupCurrentRun {
+  runId: string;
+  status: "running" | "failed" | "success" | "incomplete";
+  startedAt: string;
+  lastUpdatedAt: string;
+  completedCollections: string[];
+  totalCollections?: number;
+  errors: string[];
+}
+
 const CHUNK_SIZE_BYTES = Number(
   process.env.NEXT_PUBLIC_CHUNK_SIZE_BYTES || String(1 * 1024 * 1024),
 ); // default 1MB chunk size for uploads (safe for Vercel limits)
@@ -125,6 +135,11 @@ export default function ArchiveManagementPage() {
   const [isResuming, setIsResuming] = useState(false);
   const [archiveInProgress, setArchiveInProgress] = useState(false);
   const [currentRun, setCurrentRun] = useState<ArchiveCurrentRun | null>(null);
+  const [cleanupInProgress, setCleanupInProgress] = useState(false);
+  const [currentCleanupRun, setCurrentCleanupRun] =
+    useState<CleanupCurrentRun | null>(null);
+  const [previousCleanupInProgress, setPreviousCleanupInProgress] =
+    useState(false);
   const [previousArchiveInProgress, setPreviousArchiveInProgress] =
     useState(false);
   const [staleDetected, setStaleDetected] = useState(false);
@@ -223,6 +238,8 @@ export default function ArchiveManagementPage() {
       setLogs(data.recentRuns || data.runs || []);
       setArchiveInProgress(data.archiveInProgress === true);
       setCurrentRun(data.currentRun || null);
+      setCleanupInProgress(data.cleanupInProgress === true);
+      setCurrentCleanupRun(data.currentCleanupRun || null);
 
       const isStale = data.staleDetected === true;
       if (isStale && !staleDetected) {
@@ -251,6 +268,8 @@ export default function ArchiveManagementPage() {
       });
       setArchiveInProgress(false);
       setCurrentRun(null);
+      setCleanupInProgress(false);
+      setCurrentCleanupRun(null);
       setStaleDetected(false);
       setStaleResolution(null);
       return null;
@@ -274,6 +293,26 @@ export default function ArchiveManagementPage() {
         }
       } catch (err) {
         console.warn("Archive status poll failed:", err);
+      }
+    }
+    return false;
+  }, []);
+
+  const pollCleanupStart = useCallback(async () => {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await wait(1500);
+      try {
+        const res = await fetch("/api/archive/status");
+        if (!res.ok) continue;
+        const data = await res.json();
+        setLogs(data.recentRuns || data.runs || []);
+        setCleanupInProgress(data.cleanupInProgress === true);
+        setCurrentCleanupRun(data.currentCleanupRun || null);
+        if (data.cleanupInProgress || data.currentCleanupRun) {
+          return true;
+        }
+      } catch (err) {
+        console.warn("Cleanup status poll failed:", err);
       }
     }
     return false;
@@ -340,6 +379,32 @@ export default function ArchiveManagementPage() {
     const intervalId = window.setInterval(fetchLogs, 15000);
     return () => window.clearInterval(intervalId);
   }, [archiveInProgress, fetchLogs, isAuthenticated, isAdmin]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !isAdmin || !cleanupInProgress) return;
+
+    const intervalId = window.setInterval(fetchLogs, 15000);
+    return () => window.clearInterval(intervalId);
+  }, [cleanupInProgress, fetchLogs, isAuthenticated, isAdmin]);
+
+  useEffect(() => {
+    if (previousCleanupInProgress && !cleanupInProgress) {
+      toast({
+        title:
+          currentCleanupRun?.status === "failed"
+            ? "Cleanup Failed"
+            : "Cleanup Complete",
+        description:
+          currentCleanupRun?.status === "failed"
+            ? "Cleanup finished with errors. Check the run details."
+            : "Sanity document cleanup has finished.",
+        status: currentCleanupRun?.status === "failed" ? "error" : "success",
+        duration: 8000,
+        isClosable: true,
+      });
+    }
+    setPreviousCleanupInProgress(cleanupInProgress);
+  }, [cleanupInProgress, previousCleanupInProgress, currentCleanupRun, toast]);
 
   useEffect(() => {
     if (!isAuthenticated || !isAdmin) return;
@@ -490,6 +555,15 @@ export default function ArchiveManagementPage() {
             isClosable: true,
           });
         }
+      }
+
+      if (
+        options?.deleteOld &&
+        statusData &&
+        !statusData.cleanupInProgress &&
+        !statusData.currentCleanupRun
+      ) {
+        await pollCleanupStart();
       }
     } catch (error: any) {
       toast({
@@ -1207,6 +1281,85 @@ export default function ArchiveManagementPage() {
               {currentRun.errors.length > 0 && (
                 <Badge colorScheme="red">
                   Errors: {currentRun.errors.length}
+                </Badge>
+              )}
+            </HStack>
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {currentCleanupRun ? (
+        <Card bg={cardBgColor} borderRadius="lg" boxShadow="sm" mb={8}>
+          <CardHeader pb={0}>
+            <Flex justify="space-between" align="center">
+              <Box>
+                <Heading as="h2" size="md" color={textColor}>
+                  Current Cleanup Status
+                </Heading>
+                <Text color={textColorSecondary} fontSize="sm">
+                  Run ID: {currentCleanupRun.runId}
+                </Text>
+              </Box>
+              <Badge
+                colorScheme={
+                  currentCleanupRun.status === "running"
+                    ? "blue"
+                    : currentCleanupRun.status === "success"
+                      ? "green"
+                      : currentCleanupRun.status === "failed"
+                        ? "red"
+                        : "yellow"
+                }
+              >
+                {currentCleanupRun.status.toUpperCase()}
+              </Badge>
+            </Flex>
+          </CardHeader>
+          <CardBody>
+            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} mb={4}>
+              <Stat>
+                <StatLabel>Started</StatLabel>
+                <StatNumber>
+                  {new Date(currentCleanupRun.startedAt).toLocaleString()}
+                </StatNumber>
+              </Stat>
+              <Stat>
+                <StatLabel>Collections</StatLabel>
+                <StatNumber>
+                  {currentCleanupRun.completedCollections.length}
+                  {currentCleanupRun.totalCollections
+                    ? `/${currentCleanupRun.totalCollections}`
+                    : ""}
+                </StatNumber>
+              </Stat>
+              <Stat>
+                <StatLabel>Last updated</StatLabel>
+                <StatNumber>
+                  {new Date(currentCleanupRun.lastUpdatedAt).toLocaleString()}
+                </StatNumber>
+              </Stat>
+            </SimpleGrid>
+            <Progress
+              value={
+                currentCleanupRun.totalCollections
+                  ? (currentCleanupRun.completedCollections.length /
+                      currentCleanupRun.totalCollections) *
+                    100
+                  : 0
+              }
+              size="sm"
+              colorScheme={
+                currentCleanupRun.status === "failed" ? "red" : "blue"
+              }
+              mb={4}
+            />
+            <HStack spacing={3} wrap="wrap">
+              <Badge colorScheme="green">
+                Completed: {currentCleanupRun.completedCollections.length}
+              </Badge>
+              {currentCleanupRun.errors.length > 0 && (
+                <Badge colorScheme="red">
+                  Errors: {currentCleanupRun.errors.length}
                 </Badge>
               )}
             </HStack>

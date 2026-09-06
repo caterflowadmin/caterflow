@@ -1388,6 +1388,7 @@ export async function cleanupArchivedSanityData(
         startedAt,
         cutoff,
         completedCollections: Array.from(completedCollections),
+        totalCollections: CLEANUP_COLLECTIONS_TO_PROCESS.length,
         lastUpdatedAt: new Date().toISOString(),
       },
     } as any,

@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getRecentArchiveRuns } from "@/lib/archiveQueries";
-import { getArchiveProgress } from "@/lib/archiveService";
+import { getArchiveProgress, getCleanupProgress } from "@/lib/archiveService";
 
 export async function GET(request: Request) {
   try {
@@ -21,6 +21,7 @@ export async function GET(request: Request) {
 
     const progress = await getArchiveProgress();
     const inProgress = progress.inProgress;
+    const cleanupProgress = await getCleanupProgress();
     const serialized = runs.map((run) => {
       const documentsArchived = Object.values(run.archived || {}).reduce(
         (sum: number, value: any) =>
@@ -121,6 +122,9 @@ export async function GET(request: Request) {
       staleResolution: progress.staleDetected
         ? "Detected stale active archive progress and automatically marked the run as failed."
         : "No stale archive action taken.",
+      cleanupInProgress: cleanupProgress.inProgress,
+      currentCleanupRun: cleanupProgress.currentRun,
+      cleanupStaleDetected: cleanupProgress.staleDetected === true,
     });
   } catch (error: any) {
     console.error("Failed to fetch archive status:", error);

@@ -59,23 +59,47 @@ export async function POST(request: Request) {
       // previously-interrupted (`incomplete`) run first, rather than
       // treating "incomplete" as a reason to block a new attempt — it's
       // paused and resumable, not actively in flight elsewhere.
-      const resumeCleanupResult = await resumeIncompleteCleanup(5);
-      if (resumeCleanupResult.attempts > 0) {
+      //
+      // IMPORTANT: resumeIncompleteCleanup() calls cleanupArchivedSanityData()
+      // directly, which is itself allowed to run close to the full
+      // ARCHIVE_MAX_SECONDS (~270s) budget per attempt. For a large backlog
+      // that routinely needs resuming, `await`ing that here — inline in the
+      // request handler, for a *manual* (browser-facing) trigger — blocks
+      // the HTTP response for that entire duration, which either looks like
+      // a hang to the admin or genuinely exceeds Vercel's 300s maxDuration
+      // and gets hard-killed: a 504, with the response never sent. That is
+      // the same failure this whole batching system exists to avoid — it
+      // just moved from "the initial run" to "every resume of it," which
+      // for a backlog needing multiple resumes is most clicks, not a rare
+      // one. So: just detect that a resume is needed (a cheap query) and
+      // hand the actual work to after(), exactly like starting a fresh run.
+      const dbRef = await getArchiveDb();
+      const pendingCleanupResume = await dbRef
+        .collection(COLLECTIONS.ARCHIVE_RUNS)
+        .findOne({ incomplete: true, kind: "cleanup" } as any, {
+          sort: { startedAt: -1 },
+        });
+
+      if (pendingCleanupResume) {
+        after(() =>
+          resumeIncompleteCleanup(5).catch((backgroundError: any) => {
+            console.error("Background cleanup resume failed:", backgroundError);
+          }),
+        );
+
         return NextResponse.json({
           success: true,
           resumed: true,
+          started: true,
+          status: "started",
           cleanup: true,
-          attempts: resumeCleanupResult.attempts,
-          finished: resumeCleanupResult.finished,
+          runId: pendingCleanupResume.runId,
           deletedArchiveRuns: metadataCleanup.deletedRuns,
           deletedBaselineSnapshots: metadataCleanup.deletedBaselines,
-          message: resumeCleanupResult.finished
-            ? "Resumed incomplete cleanup run and it has completed."
-            : "Resumed incomplete cleanup run; it will continue on the next available cycle.",
+          message:
+            "Resuming incomplete cleanup run in the background.",
         });
       }
-
-      const dbRef = await getArchiveDb();
       const progressId = "cleanup-progress";
 
       // Only an actively `running` cleanup blocks a new one — an
@@ -151,16 +175,42 @@ export async function POST(request: Request) {
 
     if (!isCronCall) {
       // For manual admin triggers: validate the archive DB connection and create a queued progress document so the UI sees a run immediately.
-      const resumeResult = await resumeIncompleteArchives(5);
-      if (resumeResult.attempts > 0) {
+      //
+      // IMPORTANT: this used to `await resumeIncompleteArchives(5)` directly
+      // here. resumeIncompleteArchives() calls runArchive() inline, and
+      // runArchive() is itself allowed to run close to the full
+      // ARCHIVE_MAX_SECONDS (~270s) budget on its first attempt (the outer
+      // time-budget guard inside resumeIncompleteArchives only kicks in
+      // *between* attempts, not before the first one). Awaiting that here —
+      // in a manual, browser-facing request handler — blocked the HTTP
+      // response for up to ~270s every time an admin clicked "Run Archive
+      // Now" while an incomplete run existed, and any batch running long
+      // pushed it past Vercel's 300s maxDuration for a hard-killed 504 with
+      // no response ever sent. For the large backlogs this batching system
+      // exists to handle, an incomplete run is the common case after the
+      // first click, not a rare one — so this was reproducing the exact
+      // failure it was built to prevent on effectively every subsequent
+      // click. Fix: just detect a pending resume (a cheap query) and hand
+      // the actual work to after(), exactly like starting a fresh run does.
+      const pendingArchiveResume = await getArchiveDb().then((db) =>
+        db
+          .collection(COLLECTIONS.ARCHIVE_RUNS)
+          .findOne({ incomplete: true } as any, { sort: { startedAt: -1 } }),
+      );
+      if (pendingArchiveResume) {
+        after(() =>
+          resumeIncompleteArchives(5).catch((backgroundError: any) => {
+            console.error("Background archive resume failed:", backgroundError);
+          }),
+        );
+
         return NextResponse.json({
           success: true,
           resumed: true,
-          attempts: resumeResult.attempts,
-          finished: resumeResult.finished,
-          message: resumeResult.finished
-            ? "Resumed incomplete archive run and it has completed."
-            : "Resumed incomplete archive run; it will continue on the next available cycle.",
+          started: true,
+          status: "started",
+          runId: pendingArchiveResume.runId,
+          message: "Resuming incomplete archive run in the background.",
         });
       }
       let dbRef: any = null;
