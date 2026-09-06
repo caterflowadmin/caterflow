@@ -74,36 +74,14 @@ export async function POST(request: Request) {
       // one. So: just detect that a resume is needed (a cheap query) and
       // hand the actual work to after(), exactly like starting a fresh run.
       const dbRef = await getArchiveDb();
-      const pendingCleanupResume = await dbRef
-        .collection(COLLECTIONS.ARCHIVE_RUNS)
-        .findOne({ incomplete: true, kind: "cleanup" } as any, {
-          sort: { startedAt: -1 },
-        });
-
-      if (pendingCleanupResume) {
-        after(() =>
-          resumeIncompleteCleanup(5).catch((backgroundError: any) => {
-            console.error("Background cleanup resume failed:", backgroundError);
-          }),
-        );
-
-        return NextResponse.json({
-          success: true,
-          resumed: true,
-          started: true,
-          status: "started",
-          cleanup: true,
-          runId: pendingCleanupResume.runId,
-          deletedArchiveRuns: metadataCleanup.deletedRuns,
-          deletedBaselineSnapshots: metadataCleanup.deletedBaselines,
-          message:
-            "Resuming incomplete cleanup run in the background.",
-        });
-      }
       const progressId = "cleanup-progress";
 
-      // Only an actively `running` cleanup blocks a new one — an
-      // `incomplete` one would have already been resumed above.
+      // This guard must run BEFORE the pending-resume check below, not
+      // after it — a stray extra request (e.g. the admin double-clicking,
+      // or two admin tabs open) landing while a resume dispatched by an
+      // earlier request is already working through the backlog in the
+      // background must not dispatch a SECOND concurrent
+      // resumeIncompleteCleanup() call racing on the same progress doc.
       const existingCleanupProgress = await dbRef
         .collection(COLLECTIONS.ARCHIVE_RUNS)
         .findOne({ _id: progressId } as any);
@@ -129,6 +107,33 @@ export async function POST(request: Request) {
             { status: 409 },
           );
         }
+      }
+
+      const pendingCleanupResume = await dbRef
+        .collection(COLLECTIONS.ARCHIVE_RUNS)
+        .findOne({ incomplete: true, kind: "cleanup" } as any, {
+          sort: { startedAt: -1 },
+        });
+
+      if (pendingCleanupResume) {
+        after(() =>
+          resumeIncompleteCleanup(5).catch((backgroundError: any) => {
+            console.error("Background cleanup resume failed:", backgroundError);
+          }),
+        );
+
+        return NextResponse.json({
+          success: true,
+          resumed: true,
+          started: true,
+          status: "started",
+          cleanup: true,
+          runId: pendingCleanupResume.runId,
+          deletedArchiveRuns: metadataCleanup.deletedRuns,
+          deletedBaselineSnapshots: metadataCleanup.deletedBaselines,
+          message:
+            "Resuming incomplete cleanup run in the background.",
+        });
       }
 
       const runId = `cleanup-${Date.now()}`;
@@ -192,11 +197,45 @@ export async function POST(request: Request) {
       // failure it was built to prevent on effectively every subsequent
       // click. Fix: just detect a pending resume (a cheap query) and hand
       // the actual work to after(), exactly like starting a fresh run does.
-      const pendingArchiveResume = await getArchiveDb().then((db) =>
-        db
-          .collection(COLLECTIONS.ARCHIVE_RUNS)
-          .findOne({ incomplete: true } as any, { sort: { startedAt: -1 } }),
-      );
+      //
+      // This must also guard against an already-active run: the admin
+      // page's auto-resume effect (POST /api/archive/resume) fires on every
+      // page load while an incomplete run exists, independent of this
+      // endpoint. Without checking here too, a "Run Archive Now" click
+      // landing while that resume is already working through the backlog in
+      // the background would dispatch a SECOND concurrent
+      // resumeIncompleteArchives() call racing on the same progress doc —
+      // which is what produced bursts of "Starting archive run: <same
+      // runId>" a few seconds apart in production logs.
+      const archiveResumePrecheckDb = await getArchiveDb();
+      const existingArchiveProgressForResume = await archiveResumePrecheckDb
+        .collection(COLLECTIONS.ARCHIVE_RUNS)
+        .findOne({ _id: "archive-progress" } as any);
+      if (existingArchiveProgressForResume?.status === "running") {
+        const lastUpdatedTs = existingArchiveProgressForResume.lastUpdatedAt
+          ? new Date(existingArchiveProgressForResume.lastUpdatedAt).getTime()
+          : null;
+        const isStale =
+          !lastUpdatedTs ||
+          Date.now() - lastUpdatedTs > ARCHIVE_PROGRESS_STALE_MS;
+        if (!isStale) {
+          return NextResponse.json(
+            {
+              success: false,
+              status: "failed",
+              archiveInProgress: true,
+              error: `An archive run is already running (started ${existingArchiveProgressForResume.startedAt}). Please wait for it to finish.`,
+              errorMessage: `An archive run is already running (started ${existingArchiveProgressForResume.startedAt}). Please wait for it to finish.`,
+              currentRunId: existingArchiveProgressForResume.runId,
+            },
+            { status: 409 },
+          );
+        }
+      }
+
+      const pendingArchiveResume = await archiveResumePrecheckDb
+        .collection(COLLECTIONS.ARCHIVE_RUNS)
+        .findOne({ incomplete: true } as any, { sort: { startedAt: -1 } });
       if (pendingArchiveResume) {
         after(() =>
           resumeIncompleteArchives(5).catch((backgroundError: any) => {

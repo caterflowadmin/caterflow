@@ -8,6 +8,7 @@ import {
   Button,
   VStack,
   HStack,
+  Stack,
   Table,
   Thead,
   Tbody,
@@ -349,11 +350,15 @@ export default function ArchiveManagementPage() {
 
       setResumeTriggered(true);
       toast({
-        title: "Archive resume triggered",
-        description: data.finished
-          ? "The incomplete archive run has been resumed and is now progressing."
-          : "Resume started. The archive will continue on the next available cycle.",
-        status: data.finished ? "success" : "info",
+        title: data.alreadyRunning
+          ? "Archive already running"
+          : data.finished
+            ? "Nothing to resume"
+            : "Archive resume triggered",
+        description:
+          data.message ||
+          "Resume started. The archive will continue in the background.",
+        status: "info",
         duration: 7000,
         isClosable: true,
       });
@@ -989,12 +994,18 @@ export default function ArchiveManagementPage() {
             download backups.
           </Text>
         </Box>
-        <HStack spacing={4} alignItems="center">
+        <Stack
+          direction={{ base: "column", sm: "row" }}
+          spacing={3}
+          w={{ base: "100%", md: "auto" }}
+          flexWrap="wrap"
+        >
           <Button
             leftIcon={<FiDownload />}
             colorScheme="gray"
             variant="outline"
             onClick={handleDownloadBackup}
+            w={{ base: "100%", sm: "auto" }}
           >
             Download Backup
           </Button>
@@ -1007,6 +1018,7 @@ export default function ArchiveManagementPage() {
               onRestoreModalOpen();
             }}
             isDisabled={archiveInProgress || isRunning}
+            w={{ base: "100%", sm: "auto" }}
           >
             Restore from Backup
           </Button>
@@ -1016,6 +1028,7 @@ export default function ArchiveManagementPage() {
             variant="ghost"
             onClick={handleRefreshStatus}
             isLoading={isLoading}
+            w={{ base: "100%", sm: "auto" }}
           >
             Refresh Status
           </Button>
@@ -1026,6 +1039,7 @@ export default function ArchiveManagementPage() {
             isLoading={isRunning}
             isDisabled={archiveInProgress || isRunning}
             loadingText="Running..."
+            w={{ base: "100%", sm: "auto" }}
           >
             {archiveInProgress ? "Archive Running" : "Run Archive Now"}
           </Button>
@@ -1036,10 +1050,11 @@ export default function ArchiveManagementPage() {
             isLoading={isRunning && deleteOld}
             isDisabled={archiveInProgress || isRunning}
             loadingText="Deleting..."
+            w={{ base: "100%", sm: "auto" }}
           >
             Delete Old Archived Sanity Data
           </Button>
-        </HStack>
+        </Stack>
       </Flex>
 
       <Card bg={cardBgColor} borderRadius="lg" boxShadow="sm" mb={8}>
@@ -1370,7 +1385,7 @@ export default function ArchiveManagementPage() {
       <Modal
         isOpen={isProgressModalOpen}
         onClose={closeProgressModal}
-        size="xl"
+        size={{ base: "full", md: "xl" }}
         closeOnEsc={currentRun?.status !== "running"}
         closeOnOverlayClick={currentRun?.status !== "running"}
         scrollBehavior="inside"
@@ -1672,7 +1687,7 @@ export default function ArchiveManagementPage() {
                   {/* Pagination Controls */}
                   {logs.length > rowsPerPage && (
                     <Tr>
-                      <Td colSpan={6} textAlign="right">
+                      <Td colSpan={9} textAlign="right">
                         <Button
                           size="sm"
                           onClick={() => setPage((p) => Math.max(p - 1, 1))}
@@ -1797,11 +1812,12 @@ export default function ArchiveManagementPage() {
                   <Box
                     maxH="420px"
                     overflowY="auto"
+                    overflowX="auto"
                     p={3}
                     bg={tableHeaderBg}
                     borderRadius="md"
                   >
-                    <Code whiteSpace="pre" width="100%">
+                    <Code whiteSpace="pre" width="100%" fontSize={{ base: "xs", md: "sm" }}>
                       {JSON.stringify(selectedRun, null, 2)}
                     </Code>
                   </Box>
@@ -1853,7 +1869,7 @@ export default function ArchiveManagementPage() {
       <Modal
         isOpen={isRunDetailsModalOpen}
         onClose={onRunDetailsModalClose}
-        size="xl"
+        size={{ base: "full", md: "xl" }}
         scrollBehavior="inside"
       >
         <ModalOverlay />
@@ -2013,7 +2029,8 @@ export default function ArchiveManagementPage() {
         isOpen={isRestoreModalOpen}
         onClose={onRestoreModalClose}
         isCentered
-        size="xl"
+        size={{ base: "full", md: "xl" }}
+        scrollBehavior="inside"
       >
         <ModalOverlay />
         <ModalContent>
