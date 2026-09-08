@@ -848,7 +848,12 @@ async function archiveDispatchLogs(
   return archiveTypeBatched({
     db,
     name: "DispatchLogs",
-    filter: `_type == "DispatchLog" && dispatchDate < $cutoff && !(evidenceStatus in ["pending", "partial"])`,
+    // Status filter deliberately removed — every DispatchLog older than
+    // cutoff is archived, drafts/pending-evidence included. Since
+    // insertIfNotExists() always re-reads and replaceOne's on content
+    // change, a record that later gets finalized will simply overwrite its
+    // Mongo copy on the next run rather than being missed.
+    filter: `_type == "DispatchLog" && dispatchDate < $cutoff`,
     projection: `
             _id, _type, _createdAt, _updatedAt, dispatchNumber, dispatchDate, evidenceStatus, status,
             peopleFed, totalCost, costPerPerson, sellingPrice, totalSales, notes,
@@ -884,7 +889,8 @@ async function archivePurchaseOrders(
   return archiveTypeBatched({
     db,
     name: "PurchaseOrders",
-    filter: `_type == "PurchaseOrder" && orderDate < $cutoff && !(status in ["draft", "pending-approval"])`,
+    // Status filter deliberately removed — see DispatchLogs above.
+    filter: `_type == "PurchaseOrder" && orderDate < $cutoff`,
     projection: `
             _id, _type, _createdAt, _updatedAt, poNumber, orderDate, status, totalAmount, notes,
             evidenceStatus, approvedAt,
@@ -920,7 +926,8 @@ async function archiveGoodsReceipts(
   return archiveTypeBatched({
     db,
     name: "GoodsReceipts",
-    filter: `_type == "GoodsReceipt" && receiptDate < $cutoff && !(evidenceStatus in ["pending", "partial"])`,
+    // Status filter deliberately removed — see DispatchLogs above.
+    filter: `_type == "GoodsReceipt" && receiptDate < $cutoff`,
     projection: `
             _id, _type, _createdAt, _updatedAt, receiptNumber, receiptDate, status, evidenceStatus, notes,
             completedAt,
@@ -964,7 +971,8 @@ async function archiveInternalTransfers(
   return archiveTypeBatched({
     db,
     name: "InternalTransfers",
-    filter: `_type == "InternalTransfer" && transferDate < $cutoff && !(status in ["draft", "pending-approval"])`,
+    // Status filter deliberately removed — see DispatchLogs above.
+    filter: `_type == "InternalTransfer" && transferDate < $cutoff`,
     projection: `
             _id, _type, _createdAt, _updatedAt, transferNumber, transferDate, status, notes,
             approvedAt,
@@ -998,10 +1006,11 @@ async function archiveStockAdjustments(
   return archiveTypeBatched({
     db,
     name: "StockAdjustments",
-    filter: `_type == "StockAdjustment" && adjustmentDate < $cutoff && !(evidenceStatus in ["pending", "partial"])`,
+    // Status filter deliberately removed — see DispatchLogs above.
+    filter: `_type == "StockAdjustment" && adjustmentDate < $cutoff`,
     projection: `
             _id, _type, _createdAt, _updatedAt, adjustmentNumber, adjustmentDate, adjustmentType,
-            evidenceStatus, notes,
+            status, evidenceStatus, notes,
             "adjustedBy": adjustedBy->{_id, name, email},
             "bin": bin->{_id, name, "site": site->{_id, name}},
             "adjustedItems": adjustedItems[]{
@@ -1029,7 +1038,8 @@ async function archiveInventoryCounts(
   return archiveTypeBatched({
     db,
     name: "InventoryCounts",
-    filter: `_type == "InventoryCount" && countDate < $cutoff && !(status in ["draft", "in-progress"])`,
+    // Status filter deliberately removed — see DispatchLogs above.
+    filter: `_type == "InventoryCount" && countDate < $cutoff`,
     projection: `
             _id, _type, _createdAt, _updatedAt, countNumber, countDate, status, notes,
             "countedBy": countedBy->{_id, name, email},
@@ -1315,6 +1325,28 @@ const CLEANUP_COLLECTIONS_TO_PROCESS = [
   { collectionName: COLLECTIONS.STOCK_SNAPSHOTS, sanityType: "stockSnapshot" },
 ];
 
+// Safety gate for permanent Sanity deletion: a document is only eligible
+// once its own workflow `status` shows it's actually finished (completed /
+// adjusted) or explicitly cancelled — never while it's still draft,
+// pending-approval, in-progress, or otherwise unresolved. This is checked
+// against the ARCHIVED MONGO COPY's `status` field (populated by each
+// step's projection above), not a fresh Sanity read — which is exactly why
+// the delete flow triggers a fresh archive run first (see handleRunArchive
+// in the admin UI): that guarantees the Mongo copy reflects Sanity's
+// current status before this filter is applied.
+// FileAttachments/StockSnapshots have no such field — they're not
+// workflow records, so they aren't gated here.
+const DELETE_SAFE_STATUS: Partial<
+  Record<string, { field: string; safeValues: string[] }>
+> = {
+  [COLLECTIONS.DISPATCH_LOGS]: { field: "status", safeValues: ["completed", "cancelled"] },
+  [COLLECTIONS.PURCHASE_ORDERS]: { field: "status", safeValues: ["complete", "cancelled"] },
+  [COLLECTIONS.GOODS_RECEIPTS]: { field: "status", safeValues: ["completed", "cancelled"] },
+  [COLLECTIONS.INTERNAL_TRANSFERS]: { field: "status", safeValues: ["completed", "cancelled"] },
+  [COLLECTIONS.STOCK_ADJUSTMENTS]: { field: "status", safeValues: ["completed", "cancelled"] },
+  [COLLECTIONS.INVENTORY_COUNTS]: { field: "status", safeValues: ["completed", "adjusted"] },
+};
+
 async function cleanupCollectionBatched(options: {
   db: Db;
   collectionName: string;
@@ -1348,6 +1380,13 @@ async function cleanupCollectionBatched(options: {
       // above the engine header for why this matters.
       _sanityDeletedAt: { $exists: false },
     };
+    const safeStatus = DELETE_SAFE_STATUS[options.collectionName];
+    if (safeStatus) {
+      // Never permanently delete a record that isn't actually finished —
+      // draft/pending-approval/in-progress documents are still live
+      // business data, not archival backlog.
+      query[safeStatus.field] = { $in: safeStatus.safeValues };
+    }
     if (cursor) {
       query._id = { $gt: new ObjectId(cursor) };
     }

@@ -595,7 +595,90 @@ export default function ArchiveManagementPage() {
     onOpen();
   };
 
+  // Runs a fresh archive pass to completion (queueing it, then explicitly
+  // resuming it — not relying on the admin page's auto-resume effect, which
+  // only fires once per page load and would leave a multi-resume backlog
+  // stuck) before cleanup is allowed to touch Sanity. This makes sure the
+  // Mongo copies cleanup's completeness check reads (see DELETE_SAFE_STATUS
+  // in archiveService.ts) reflect Sanity's current state, not a stale
+  // snapshot from whenever a record was last archived.
+  // Bounded to ~5 minutes of polling — if a very large backlog needs more
+  // than that, cleanup still proceeds (its own DB-level safety filter is
+  // what actually protects unfinished records, not this step), and the
+  // admin is told archiving is still catching up.
+  const runFreshArchiveToCompletion = async (): Promise<boolean> => {
+    const startRes = await fetch("/api/archive/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    const startData = await startRes.json();
+    if (!startRes.ok) {
+      throw new Error(
+        startData.errorMessage || startData.error || "Failed to start archive",
+      );
+    }
+
+    const maxAttempts = 60; // ~5 minutes at 5s intervals
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await wait(5000);
+      const res = await fetch("/api/archive/status");
+      if (!res.ok) continue;
+      const data = await res.json();
+      setLogs(data.recentRuns || data.runs || []);
+      setArchiveInProgress(data.archiveInProgress === true);
+      setCurrentRun(data.currentRun || null);
+
+      if (data.archiveInProgress) continue;
+
+      if (data.currentRun?.status === "incomplete") {
+        // Explicitly resume rather than waiting for another trigger —
+        // a backlog this size can need several resume cycles.
+        await fetch("/api/archive/resume", { method: "POST" });
+        continue;
+      }
+
+      return true; // no longer in progress and not incomplete — done
+    }
+
+    return false; // timed out — cleanup proceeds anyway, see comment above
+  };
+
   const confirmDeleteOld = async () => {
+    setIsRunning(true);
+    try {
+      toast({
+        title: "Archiving before cleanup",
+        description:
+          "Running a fresh archive pass first so MongoDB reflects Sanity's current state before anything is deleted.",
+        status: "info",
+        duration: 6000,
+        isClosable: true,
+      });
+      const completed = await runFreshArchiveToCompletion();
+      if (!completed) {
+        toast({
+          title: "Archive still catching up",
+          description:
+            "The pre-cleanup archive pass is still running after 5 minutes. Proceeding to cleanup anyway — its own safety check will still skip any document that isn't completed or cancelled.",
+          status: "warning",
+          duration: 8000,
+          isClosable: true,
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Pre-cleanup archive failed",
+        description:
+          (error?.message || "Could not run archive before cleanup.") +
+          " Proceeding to cleanup anyway — its own safety check will still skip any document that isn't completed or cancelled.",
+        status: "warning",
+        duration: 8000,
+        isClosable: true,
+      });
+    } finally {
+      setIsRunning(false);
+    }
+
     await handleRunArchive({ deleteOld: true });
     onClose();
     setDeleteOld(false);
@@ -2006,15 +2089,23 @@ export default function ArchiveManagementPage() {
           <ModalHeader>Delete Old Archived Sanity Data</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
+            <Text mb={3}>
+              This will run a fresh archive pass first, then permanently
+              delete Sanity documents that were already archived to MongoDB
+              more than {ARCHIVE_DAYS} days ago (this is time since the
+              document was copied to Mongo, not its original date).
+              Documents become eligible for the Mongo copy almost as soon as
+              they're finalized, so in practice this is roughly{" "}
+              {ARCHIVE_DAYS} days after a document was finalized.
+            </Text>
+            <Text mb={3}>
+              Documents that are still draft, pending approval, or otherwise
+              in progress are never deleted, regardless of age — only ones
+              marked completed (or cancelled) are eligible.
+            </Text>
             <Text>
-              This will permanently delete Sanity documents that were already
-              archived to MongoDB more than {ARCHIVE_DAYS} days ago (this is
-              time since the document was copied to Mongo, not its original
-              date). Documents become eligible for the Mongo copy almost as
-              soon as they're finalized, so in practice this is roughly{" "}
-              {ARCHIVE_DAYS} days after a document was finalized. It will
-              also clean up old archive metadata records. This action cannot
-              be undone.
+              This will also clean up old archive metadata records. This
+              action cannot be undone.
             </Text>
           </ModalBody>
           <ModalFooter>
