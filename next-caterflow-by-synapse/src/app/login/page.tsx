@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import {
   Box,
   Button,
@@ -36,7 +36,11 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn, useSession } from 'next-auth/react';
 import { motion } from 'framer-motion';
 
-export default function LoginPage() {
+// useSearchParams() opts this out of static rendering, which requires a
+// Suspense boundary around the component that calls it — see the default
+// export below, which supplies that boundary. LoginPageInner is not
+// exported directly.
+function LoginPageInner() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -353,5 +357,19 @@ export default function LoginPage() {
         </ModalContent>
       </Modal>
     </>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <Flex justify="center" align="center" minH="100vh">
+          <Spinner size="xl" color="brand.500" />
+        </Flex>
+      }
+    >
+      <LoginPageInner />
+    </Suspense>
   );
 }
