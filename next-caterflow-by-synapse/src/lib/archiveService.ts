@@ -2186,13 +2186,82 @@ export async function runArchive(
     ) => Promise<BatchedStepResult>;
   }[] = [];
 
+  // appendProgress fires once PER DOCUMENT processed (see
+  // insertIfNotExists's progressMessages.forEach(...)) — up to hundreds of
+  // times per batch. It used to call updateArchiveProgress() directly,
+  // unawaited, on every single call: a 200-document batch fired up to 200
+  // concurrent, un-throttled writes at the SAME single progress document
+  // ($push on an unbounded array), all competing for the driver's
+  // maxPoolSize:10 connection pool. That write storm is what actually
+  // produced the "Failed to update archive progress: connection N ...
+  // timed out" cascades seen in production — not a resource-starved
+  // environment, a self-inflicted one. Progress messages are purely
+  // informational (the admin UI's live log), not correctness-critical, so
+  // they're now buffered in memory and flushed as a single coalesced write
+  // at most once per PROGRESS_FLUSH_INTERVAL_MS, with the stored array
+  // capped via $slice so a long, multi-thousand-document run can't grow
+  // the progress document without bound either.
+  const PROGRESS_FLUSH_INTERVAL_MS = 1000;
+  const PROGRESS_MAX_STORED_MESSAGES = 200;
+  let pendingProgressMessages: string[] = [];
+  let pendingSkippedItems: any[] = [];
+  let lastProgressFlushMs = 0;
+  let progressFlushInFlight: Promise<void> | null = null;
+
+  const flushProgressMessages = async (force = false): Promise<void> => {
+    if (!pendingProgressMessages.length && !pendingSkippedItems.length) return;
+    if (progressFlushInFlight) return; // a flush is already in-flight; next tick will pick up anything new
+    if (!force && Date.now() - lastProgressFlushMs < PROGRESS_FLUSH_INTERVAL_MS) return;
+
+    const messagesToFlush = pendingProgressMessages;
+    const skippedToFlush = pendingSkippedItems;
+    pendingProgressMessages = [];
+    pendingSkippedItems = [];
+    lastProgressFlushMs = Date.now();
+
+    const pushOps: Record<string, any> = {};
+    if (messagesToFlush.length) {
+      pushOps.progressMessages = {
+        $each: messagesToFlush,
+        $slice: -PROGRESS_MAX_STORED_MESSAGES,
+      };
+    }
+    if (skippedToFlush.length) {
+      pushOps.skippedItems = {
+        $each: skippedToFlush,
+        $slice: -PROGRESS_MAX_STORED_MESSAGES,
+      };
+    }
+
+    progressFlushInFlight = progressCollection
+      .updateOne(
+        { _id: progressId } as any,
+        {
+          $set: { lastUpdatedAt: new Date().toISOString() },
+          $push: pushOps,
+        } as any,
+        { upsert: true },
+      )
+      .then(() => undefined)
+      .catch((err: any) => {
+        console.error("Failed to update archive progress:", err?.message || err);
+      })
+      .finally(() => {
+        progressFlushInFlight = null;
+      });
+    await progressFlushInFlight;
+  };
+
   appendProgress = (message: string | { skippedItem?: any }) => {
-    void updateArchiveProgress(
-      progressCollection,
-      progressId,
-      {},
-      message as any,
-    );
+    if (typeof message === "string") {
+      pendingProgressMessages.push(message);
+    } else if (message?.skippedItem) {
+      pendingSkippedItems.push(message.skippedItem);
+      pendingProgressMessages.push(
+        message.skippedItem.message || "Skipped item",
+      );
+    }
+    void flushProgressMessages(false);
   };
 
   try {
@@ -2577,6 +2646,9 @@ export async function runArchive(
 
     throw err;
   } finally {
+    // Flush whatever's still buffered — otherwise the last (sub-second)
+    // batch of progress messages is silently dropped when the run ends.
+    await flushProgressMessages(true).catch(() => {});
     appendProgress = undefined;
   }
 }
