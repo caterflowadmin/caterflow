@@ -1001,11 +1001,11 @@ export default function ArchiveManagementPage() {
             download backups.
           </Text>
         </Box>
-        <Stack
+        <Flex
           direction={{ base: "column", sm: "row" }}
-          spacing={3}
+          gap={3}
           w={{ base: "100%", md: "auto" }}
-          flexWrap="wrap"
+          wrap="wrap"
         >
           <Button
             leftIcon={<FiDownload />}
@@ -1061,7 +1061,7 @@ export default function ArchiveManagementPage() {
           >
             Delete Old Archived Sanity Data
           </Button>
-        </Stack>
+        </Flex>
       </Flex>
 
       <Card bg={cardBgColor} borderRadius="lg" boxShadow="sm" mb={8}>
