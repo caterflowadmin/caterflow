@@ -442,6 +442,13 @@ export default function ArchiveManagementPage() {
         });
       }
 
+      // Must still reset here, before the early return below — this branch
+      // used to return without ever calling setPreviousArchiveInProgress,
+      // so it stayed stuck at `true` forever after the first completion.
+      // Every later poll where archiveInProgress was momentarily false
+      // (including the bursts from the resume-loop bug fixed in
+      // archiveService.ts) then re-triggered this exact same toast again.
+      setPreviousArchiveInProgress(archiveInProgress);
       const refreshTimer = window.setTimeout(fetchLogs, 2000);
       return () => window.clearTimeout(refreshTimer);
     }

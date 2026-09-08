@@ -1681,8 +1681,15 @@ export async function resumeIncompleteCleanup(
     const res = await cleanupArchivedSanityData(incompleteRun.runId);
 
     if (!res.incomplete) {
+      // Clear the incomplete flag on THIS run's own checkpoint doc(s) now
+      // that it has finished — matching on runId, not excluding it. The
+      // previous `$ne: res.runId` here excluded exactly the docs that
+      // needed clearing, so the run's last incomplete checkpoint was never
+      // marked done: the next resume attempt (here, the next cron tick, or
+      // the admin page's auto-resume) kept finding it and re-running the
+      // same already-finished cleanup indefinitely.
       await db.collection(COLLECTIONS.ARCHIVE_RUNS).updateMany(
-        { incomplete: true, kind: "cleanup", runId: { $ne: res.runId } } as any,
+        { incomplete: true, kind: "cleanup", runId: res.runId } as any,
         { $set: { incomplete: false } } as any,
       );
       const stillIncomplete = await db
@@ -2550,10 +2557,18 @@ export async function resumeIncompleteArchives(
     const res = await runArchive(incompleteRun.runId);
 
     if (!res.incomplete) {
+      // See the identical fix/comment in resumeIncompleteCleanup() above:
+      // this must match runId (the run that just finished), not exclude
+      // it — excluding it left this run's own checkpoint doc(s) stuck at
+      // incomplete: true forever, so every subsequent resume attempt (next
+      // cron tick, admin page auto-resume, or "Run Archive Now" click)
+      // found the same already-finished run "incomplete" again and
+      // re-ran it from scratch, producing repeated duplicate success
+      // entries in the archive history every few seconds.
       await db
         .collection(COLLECTIONS.ARCHIVE_RUNS)
         .updateMany(
-          { incomplete: true, runId: { $ne: res.runId } },
+          { incomplete: true, runId: res.runId },
           { $set: { incomplete: false } },
         );
     }
