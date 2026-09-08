@@ -2010,10 +2010,11 @@ export default function ArchiveManagementPage() {
               This will permanently delete Sanity documents that were already
               archived to MongoDB more than {ARCHIVE_DAYS} days ago (this is
               time since the document was copied to Mongo, not its original
-              date — so in practice a document is usually about{" "}
-              {ARCHIVE_DAYS * 2} days old by the time it becomes eligible for
-              deletion here). It will also clean up old archive metadata
-              records. This action cannot be undone.
+              date). Documents become eligible for the Mongo copy almost as
+              soon as they're finalized, so in practice this is roughly{" "}
+              {ARCHIVE_DAYS} days after a document was finalized. It will
+              also clean up old archive metadata records. This action cannot
+              be undone.
             </Text>
           </ModalBody>
           <ModalFooter>

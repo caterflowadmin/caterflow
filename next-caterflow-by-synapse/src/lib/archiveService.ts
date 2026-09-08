@@ -4,7 +4,21 @@ import { getArchiveDb, COLLECTIONS } from "@/lib/mongoClient";
 import type { Db } from "mongodb";
 import { ObjectId } from "mongodb";
 
+// ARCHIVE_DAYS governs when a document's Sanity copy becomes eligible for
+// PERMANENT DELETION from Sanity (see cleanupArchivedSanityData) — kept at
+// 90 days by default; deletion is destructive, so this stays conservative.
 const ARCHIVE_DAYS = parseInt(process.env.ARCHIVE_DAYS_THRESHOLD || "90", 10);
+// ARCHIVE_MIN_AGE_DAYS governs a separate, much cheaper question: when is a
+// document old enough to get a non-destructive COPY written into MongoDB?
+// Copying is safe to do aggressively (it never removes anything from
+// Sanity), so this defaults to 0 — a document becomes archive-eligible as
+// soon as it's finalized (see each step's status filter below), regardless
+// of age. Deliberately decoupled from ARCHIVE_DAYS so lowering this can't
+// accidentally also widen what's eligible for deletion.
+const ARCHIVE_MIN_AGE_DAYS = parseInt(
+  process.env.ARCHIVE_MIN_AGE_DAYS ?? "0",
+  10,
+);
 let appendProgress:
   | ((message: string | { skippedItem?: any }) => void)
   | undefined;
@@ -81,9 +95,21 @@ function createArchiveStepResult(options: {
   };
 }
 
+// Deletion cutoff — see ARCHIVE_DAYS above. Used only by
+// cleanupArchivedSanityData() (deleting from Sanity) and
+// cleanupOldArchiveMetadata() (trimming old run-history/baseline records).
 function getCutoffDate(): string {
   const d = new Date();
   d.setDate(d.getDate() - ARCHIVE_DAYS);
+  return d.toISOString();
+}
+
+// Archive-to-Mongo cutoff — see ARCHIVE_MIN_AGE_DAYS above. Used only by
+// runArchive() to decide which documents are old enough to copy into
+// MongoDB. Independent of getCutoffDate() by design.
+function getArchiveCutoffDate(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - ARCHIVE_MIN_AGE_DAYS);
   return d.toISOString();
 }
 
@@ -605,7 +631,7 @@ async function captureStockBaseline(db: Db): Promise<void> {
 
     await db.collection(COLLECTIONS.STOCK_BASELINES).insertOne({
       capturedAt: new Date().toISOString(),
-      cutoffDate: getCutoffDate(),
+      cutoffDate: getArchiveCutoffDate(),
       stockData: registry.stockData,
       lastRegistryUpdate: registry.lastUpdated,
     });
@@ -2048,7 +2074,7 @@ export async function runArchive(
 
   console.log(`\n🗂️  Starting archive run: ${runId}`);
   console.log(
-    `📅 Cutoff date: ${getCutoffDate()} (documents older than ${ARCHIVE_DAYS} days)`,
+    `📅 Archive-to-Mongo cutoff: ${getArchiveCutoffDate()} (documents older than ${ARCHIVE_MIN_AGE_DAYS} days)`,
   );
 
   const db = await getArchiveDb();
@@ -2138,7 +2164,7 @@ export async function runArchive(
       return Promise.resolve();
     });
 
-    const cutoff = getCutoffDate();
+    const cutoff = getArchiveCutoffDate();
     const maxSeconds = parseInt(process.env.ARCHIVE_MAX_SECONDS || "270", 10);
     const allowedMs = maxSeconds * 1000;
     startMs = Date.now();
