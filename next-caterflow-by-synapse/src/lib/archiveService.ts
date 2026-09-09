@@ -1413,50 +1413,83 @@ export async function cleanupCollectionBatched(options: {
 
     if (!batch.length) break; // no more candidates — this collection is done
 
-    for (const doc of batch) {
-      scanned += 1;
-      if (!doc._sanityId) {
-        cursor = String(doc._id);
-        continue;
-      }
+    scanned += batch.length;
+    const deletable = batch.filter((doc) => Boolean(doc._sanityId));
+
+    if (deletable.length) {
+      // Delete the whole page in ONE Sanity mutation transaction instead of
+      // one HTTP round-trip per document. The one-at-a-time version above
+      // (kept below as a fallback) is what made a multi-thousand-document
+      // backlog take hours — roughly one ~100-doc batch per ~270s
+      // invocation, almost entirely spent on sequential network latency.
+      // Sanity's mutate API accepts up to 1000 mutations per transaction
+      // (same limit already relied on in stock/clear-snapshots/route.ts)
+      // and treats deleting an already-gone document as a no-op, not an
+      // error, so this is safe to retry.
       try {
-        await withRetry(() => writeClient.delete(doc._sanityId));
-        deletedCount += 1;
+        const transaction = writeClient.transaction();
+        for (const doc of deletable) {
+          transaction.delete(doc._sanityId);
+        }
+        await withRetry(() => transaction.commit());
+        deletedCount += deletable.length;
+
+        await options.db.collection(options.collectionName).updateMany(
+          { _sanityId: { $in: deletable.map((doc) => doc._sanityId) } },
+          { $set: { _sanityDeletedAt: new Date().toISOString() } },
+        );
       } catch (err: any) {
-        if (err?.statusCode === 404) {
+        // Whole-transaction failure (network/auth/rate-limit, or a
+        // document that genuinely can't be deleted) — fall back to the
+        // original per-document path for just this page, so one bad
+        // document can't take out an entire batch that would otherwise
+        // have succeeded.
+        console.error(
+          `⚠️ Batched delete failed for ${options.collectionName}, falling back to per-document deletes:`,
+          err?.message || err,
+        );
+        for (const doc of deletable) {
+          try {
+            await withRetry(() => writeClient.delete(doc._sanityId));
+          } catch (docErr: any) {
+            if (docErr?.statusCode !== 404) {
+              console.error(
+                `❌ Failed to delete Sanity document ${doc._sanityId} from ${options.collectionName}:`,
+                docErr,
+              );
+              options.errors.push(
+                `Failed to delete Sanity document ${doc._sanityId} (${options.collectionName}): ${docErr?.message || docErr}`,
+              );
+              continue;
+            }
+          }
           deletedCount += 1;
-        } else {
-          console.error(
-            `❌ Failed to delete Sanity document ${doc._sanityId} from ${options.collectionName}:`,
-            err,
-          );
-          options.errors.push(
-            `Failed to delete Sanity document ${doc._sanityId} (${options.collectionName}): ${err?.message || err}`,
-          );
-          cursor = String(doc._id);
-          continue;
+          try {
+            await options.db
+              .collection(options.collectionName)
+              .updateOne(
+                { _sanityId: doc._sanityId },
+                { $set: { _sanityDeletedAt: new Date().toISOString() } },
+              );
+          } catch (updateErr: any) {
+            console.error(
+              `❌ Deleted Sanity document ${doc._sanityId} but failed to mark it deleted in Mongo (${options.collectionName}):`,
+              updateErr,
+            );
+            options.errors.push(
+              `Deleted Sanity document ${doc._sanityId} (${options.collectionName}) but failed to record it in Mongo: ${updateErr?.message || updateErr}`,
+            );
+          }
         }
       }
-
-      try {
-        await options.db
-          .collection(options.collectionName)
-          .updateOne(
-            { _sanityId: doc._sanityId },
-            { $set: { _sanityDeletedAt: new Date().toISOString() } },
-          );
-      } catch (err: any) {
-        console.error(
-          `❌ Deleted Sanity document ${doc._sanityId} but failed to mark it deleted in Mongo (${options.collectionName}):`,
-          err,
-        );
-        options.errors.push(
-          `Deleted Sanity document ${doc._sanityId} (${options.collectionName}) but failed to record it in Mongo: ${err?.message || err}`,
-        );
-      }
-
-      cursor = String(doc._id);
     }
+
+    // Cursor always advances to the last document in the page, whether or
+    // not every document in it actually got deleted — a per-document
+    // failure is recorded in `errors` and naturally retried on the next
+    // full cleanup pass (which re-queries from scratch), not by re-fetching
+    // the same page again here.
+    cursor = String(batch[batch.length - 1]._id);
 
     lastBatchDurationMs = Date.now() - batchStartedMs;
     if (batch.length < batchSize) break; // last (partial) page — done

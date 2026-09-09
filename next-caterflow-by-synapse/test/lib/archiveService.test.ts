@@ -6,7 +6,7 @@
 
 jest.mock("@/lib/sanity", () => ({
   client: {},
-  writeClient: { delete: jest.fn() },
+  writeClient: { delete: jest.fn(), transaction: jest.fn() },
 }));
 
 // next-sanity ships ESM-only, which Jest can't parse under the default
@@ -207,6 +207,7 @@ function createCleanupMockDb() {
 describe("cleanupCollectionBatched", () => {
   beforeEach(() => {
     (writeClient.delete as jest.Mock).mockClear();
+    (writeClient.transaction as jest.Mock).mockClear();
   });
 
   it("queries only Mongo copies that are archived, past cutoff, and not already deleted", async () => {
@@ -250,7 +251,24 @@ describe("cleanupCollectionBatched", () => {
     expect(query.status).toEqual({ $in: ["completed", "cancelled"] });
   });
 
-  it("deletes from Sanity only the documents Mongo returned as candidates, and marks them in Mongo", async () => {
+  // Deletes are now issued as ONE Sanity mutation transaction per page,
+  // not one HTTP request per document — see cleanupCollectionBatched. A
+  // multi-thousand-document backlog previously took roughly one ~100-doc
+  // batch per ~270s invocation (almost entirely sequential network
+  // latency); this collapses each batch to a single round trip.
+  function createMockTransaction() {
+    const deleted: string[] = [];
+    const transaction = {
+      delete: jest.fn((id: string) => {
+        deleted.push(id);
+        return transaction;
+      }),
+      commit: jest.fn().mockResolvedValue({}),
+    };
+    return { transaction, deleted };
+  }
+
+  it("deletes a whole page in one transaction and marks all of them in Mongo with one updateMany", async () => {
     const toArray = jest
       .fn()
       .mockResolvedValueOnce([
@@ -262,8 +280,51 @@ describe("cleanupCollectionBatched", () => {
     const limit = jest.fn().mockReturnValue({ project });
     const sort = jest.fn().mockReturnValue({ limit });
     const find = jest.fn().mockReturnValue({ sort });
+    const updateMany = jest.fn().mockResolvedValue({});
+    const db = { collection: jest.fn().mockReturnValue({ find, updateMany }) } as any;
+
+    const { transaction, deleted } = createMockTransaction();
+    (writeClient.transaction as jest.Mock).mockReturnValue(transaction);
+
+    const result = await cleanupCollectionBatched({
+      db,
+      collectionName: "archived_file_attachments",
+      cutoffDate: "2026-01-01T00:00:00.000Z",
+      resumeCursor: null,
+      checkTimeBudget: () => false,
+      errors: [],
+      batchSize: 2,
+    });
+
+    expect(result.deletedCount).toBe(2);
+    expect(deleted).toEqual(["sanity-1", "sanity-2"]);
+    expect(transaction.commit).toHaveBeenCalledTimes(1);
+    expect(writeClient.delete).not.toHaveBeenCalled(); // fast path only, no fallback needed
+    expect(updateMany).toHaveBeenCalledWith(
+      { _sanityId: { $in: ["sanity-1", "sanity-2"] } },
+      { $set: { _sanityDeletedAt: expect.any(String) } },
+    );
+  });
+
+  it("falls back to per-document deletes for a page if the batched transaction itself fails", async () => {
+    const toArray = jest
+      .fn()
+      .mockResolvedValueOnce([
+        { _id: "mongo-1", _sanityId: "sanity-1" },
+        { _id: "mongo-2", _sanityId: "sanity-2" },
+      ])
+      .mockResolvedValueOnce([]);
+    const project = jest.fn().mockReturnValue({ toArray });
+    const limit = jest.fn().mockReturnValue({ project });
+    const sort = jest.fn().mockReturnValue({ limit });
+    const find = jest.fn().mockReturnValue({ sort });
     const updateOne = jest.fn().mockResolvedValue({});
     const db = { collection: jest.fn().mockReturnValue({ find, updateOne }) } as any;
+
+    const { transaction } = createMockTransaction();
+    transaction.commit.mockRejectedValue(new Error("transaction failed"));
+    (writeClient.transaction as jest.Mock).mockReturnValue(transaction);
+    (writeClient.delete as jest.Mock).mockResolvedValue({});
 
     const result = await cleanupCollectionBatched({
       db,
@@ -285,7 +346,7 @@ describe("cleanupCollectionBatched", () => {
     );
   });
 
-  it("never calls Sanity delete for a candidate with no resolvable _sanityId", async () => {
+  it("never calls Sanity delete or transaction for a candidate with no resolvable _sanityId", async () => {
     const { db } = createCleanupMockDb();
     (db.collection as jest.Mock).mockReturnValue({
       find: jest.fn().mockReturnValue({
@@ -298,6 +359,7 @@ describe("cleanupCollectionBatched", () => {
         }),
       }),
       updateOne: jest.fn(),
+      updateMany: jest.fn(),
     });
 
     const result = await cleanupCollectionBatched({
@@ -311,6 +373,7 @@ describe("cleanupCollectionBatched", () => {
 
     expect(result.deletedCount).toBe(0);
     expect(writeClient.delete).not.toHaveBeenCalled();
+    expect(writeClient.transaction).not.toHaveBeenCalled();
   });
 });
 
