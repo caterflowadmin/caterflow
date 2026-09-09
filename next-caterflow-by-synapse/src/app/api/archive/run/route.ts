@@ -18,6 +18,33 @@ import { getArchiveDb, COLLECTIONS } from "@/lib/mongoClient";
 
 export const maxDuration = 300; // 5 minutes — Vercel Pro allows up to 300s
 
+// Retry a momentary MongoDB connection blip instead of failing the whole
+// request immediately. This is exactly what produced "MongoServerSelectionError:
+// Server selection timed out after 30000 ms" / "Socket 'secureConnect' timed
+// out after ...ms (connectTimeoutMS: 8000)" -> 500 in production even when
+// the cluster recovered seconds later — reproduced live against this same
+// deleteOld path, which used to call cleanupOldArchiveMetadata() with no
+// retry at all (unlike the manual-archive path below, which already had
+// this). Shared by every manual (browser-facing) trigger path in this file.
+async function pingArchiveDbWithRetry(): Promise<Awaited<ReturnType<typeof getArchiveDb>>> {
+  const dbRef = await getArchiveDb();
+  let pingErr: any;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await dbRef.admin().ping();
+      return dbRef;
+    } catch (err: any) {
+      pingErr = err;
+      if (attempt < 3) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 500 * Math.pow(2, attempt - 1)),
+        );
+      }
+    }
+  }
+  throw pingErr;
+}
+
 export async function POST(request: Request) {
   // ── Authentication: Accept either Vercel Cron secret OR admin session ──
 
@@ -45,6 +72,25 @@ export async function POST(request: Request) {
 
   try {
     if (deleteOld) {
+      try {
+        await pingArchiveDbWithRetry();
+      } catch (err: any) {
+        console.error("Manual cleanup startup failed:", err);
+        return NextResponse.json(
+          {
+            success: false,
+            status: "failed",
+            error:
+              err?.message ||
+              "Unable to connect to archive MongoDB. Check MONGODB_URL / MONGODB_URI and network access.",
+            errorMessage:
+              err?.message ||
+              "Unable to connect to archive MongoDB. Check MONGODB_URL / MONGODB_URI and network access.",
+          },
+          { status: 500 },
+        );
+      }
+
       const metadataCleanup = await cleanupOldArchiveMetadata();
 
       // Cleanup used to run entirely synchronously in this handler — same
@@ -254,28 +300,7 @@ export async function POST(request: Request) {
       }
       let dbRef: any = null;
       try {
-        dbRef = await getArchiveDb();
-        // Retry a momentary connection blip instead of failing the whole
-        // request immediately — this is exactly the check that produced
-        // "MongoServerSelectionError: Server selection timed out after
-        // 30000 ms" -> 500 in production even when the cluster recovered
-        // seconds later.
-        let pingErr: any;
-        let pinged = false;
-        for (let attempt = 1; attempt <= 3 && !pinged; attempt++) {
-          try {
-            await dbRef.admin().ping();
-            pinged = true;
-          } catch (err: any) {
-            pingErr = err;
-            if (attempt < 3) {
-              await new Promise((resolve) =>
-                setTimeout(resolve, 500 * Math.pow(2, attempt - 1)),
-              );
-            }
-          }
-        }
-        if (!pinged) throw pingErr;
+        dbRef = await pingArchiveDbWithRetry();
       } catch (err: any) {
         console.error("Manual archive startup failed:", err);
         return NextResponse.json(
