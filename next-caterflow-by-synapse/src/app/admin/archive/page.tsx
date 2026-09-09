@@ -117,7 +117,7 @@ interface ArchiveCurrentRun {
 
 interface CleanupCurrentRun {
   runId: string;
-  status: "running" | "failed" | "success" | "incomplete";
+  status: "running" | "failed" | "success" | "incomplete" | "partial";
   startedAt: string;
   lastUpdatedAt: string;
   completedCollections: string[];
@@ -484,12 +484,21 @@ export default function ArchiveManagementPage() {
         title:
           currentCleanupRun?.status === "failed"
             ? "Cleanup Failed"
-            : "Cleanup Complete",
+            : currentCleanupRun?.status === "partial"
+              ? "Cleanup Complete (with skipped documents)"
+              : "Cleanup Complete",
         description:
           currentCleanupRun?.status === "failed"
             ? "Cleanup finished with errors. Check the run details."
-            : "Sanity document cleanup has finished.",
-        status: currentCleanupRun?.status === "failed" ? "error" : "success",
+            : currentCleanupRun?.status === "partial"
+              ? "Cleanup finished — some documents were skipped (e.g. still referenced elsewhere in Sanity). Check the run details."
+              : "Sanity document cleanup has finished.",
+        status:
+          currentCleanupRun?.status === "failed"
+            ? "error"
+            : currentCleanupRun?.status === "partial"
+              ? "warning"
+              : "success",
         duration: 8000,
         isClosable: true,
       });
@@ -1440,7 +1449,9 @@ export default function ArchiveManagementPage() {
                       ? "green"
                       : currentCleanupRun.status === "failed"
                         ? "red"
-                        : "yellow"
+                        : currentCleanupRun.status === "partial"
+                          ? "orange"
+                          : "yellow"
                 }
               >
                 {currentCleanupRun.status.toUpperCase()}

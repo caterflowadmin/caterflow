@@ -23,6 +23,18 @@ export async function GET(request: Request) {
     const inProgress = progress.inProgress;
     const cleanupProgress = await getCleanupProgress();
     const serialized = runs.map((run) => {
+      // Cleanup (delete) runs and archive runs are different shapes: a
+      // cleanup run's real deleted-count lives in `deletedSanityDocuments`
+      // (see CleanupRunResult in archiveService.ts) — it has no `steps` or
+      // `archived` fields at all. Reading only the archive-run fields below
+      // meant every cleanup run showed "Docs Deleted: 0" regardless of how
+      // many documents were actually deleted, and — since the
+      // partial-vs-failed check also only looked at `documentsArchived` —
+      // a cleanup run that deleted thousands of documents but hit a few
+      // legitimate per-document errors (e.g. Sanity refusing to delete a
+      // still-referenced document) was unconditionally reported "failed"
+      // instead of "partial".
+      const isCleanupRun = run.kind === "cleanup";
       const documentsArchived = Object.values(run.archived || {}).reduce(
         (sum: number, value: any) =>
           sum + (typeof value === "number" ? value : 0),
@@ -43,8 +55,17 @@ export async function GET(request: Request) {
           : run.steps
             ? run.steps.reduce((s: number, st: any) => s + (st.skipped || 0), 0)
             : 0;
+      const documentsDeleted = isCleanupRun
+        ? run.deletedSanityDocuments || 0
+        : run.steps
+          ? run.steps.reduce(
+              (sum: number, step: any) => sum + (step.deletedCount || 0),
+              0,
+            )
+          : documentsArchived;
+      const successCount = isCleanupRun ? documentsDeleted : documentsArchived;
       const status = run.errors?.length
-        ? documentsArchived > 0
+        ? successCount > 0
           ? "partial"
           : "failed"
         : "success";
@@ -57,12 +78,7 @@ export async function GET(request: Request) {
         documentsArchived,
         totalInserted,
         totalSkipped,
-        documentsDeleted: run.steps
-          ? run.steps.reduce(
-              (sum: number, step: any) => sum + (step.deletedCount || 0),
-              0,
-            )
-          : documentsArchived,
+        documentsDeleted,
         assetsDeleted: run.assetsDeleted || 0,
         steps: run.steps || [],
         errors: run.errors || [],

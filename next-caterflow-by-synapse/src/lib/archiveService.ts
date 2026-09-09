@@ -1673,7 +1673,16 @@ export async function cleanupArchivedSanityData(
     { _id: progressId } as any,
     {
       $set: {
-        status: errors.length ? "failed" : "success",
+        // A run that deletes thousands of documents but hits a handful of
+        // legitimate per-document errors (e.g. Sanity refusing to delete a
+        // still-referenced document — expected, not a bug) is a partial
+        // success, not a failure. Reporting it as "failed" when the vast
+        // majority of the work succeeded is misleading to the admin.
+        status: errors.length
+          ? deletedSanityDocuments > 0
+            ? "partial"
+            : "failed"
+          : "success",
         completedAt,
         errors,
         lastUpdatedAt: new Date().toISOString(),
