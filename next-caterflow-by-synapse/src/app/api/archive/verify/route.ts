@@ -8,7 +8,7 @@ import { client as sanityClient } from "@/lib/sanity";
 import { groq } from "next-sanity";
 import { getArchiveDb, COLLECTIONS } from "@/lib/mongoClient";
 
-const ARCHIVE_DAYS = parseInt(process.env.ARCHIVE_DAYS_THRESHOLD || "90", 10);
+const ARCHIVE_DAYS = parseInt(process.env.ARCHIVE_DAYS_THRESHOLD || "60", 10);
 
 export async function POST(request: Request) {
   try {

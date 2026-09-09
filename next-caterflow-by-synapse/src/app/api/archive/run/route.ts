@@ -507,6 +507,6 @@ export async function GET() {
   return NextResponse.json({
     status: "Archive endpoint ready",
     schedule: "Daily at midnight (UTC)",
-    threshold: `${process.env.ARCHIVE_DAYS_THRESHOLD || 90} days`,
+    threshold: `${process.env.ARCHIVE_DAYS_THRESHOLD || 60} days`,
   });
 }

@@ -6,8 +6,8 @@ import { ObjectId } from "mongodb";
 
 // ARCHIVE_DAYS governs when a document's Sanity copy becomes eligible for
 // PERMANENT DELETION from Sanity (see cleanupArchivedSanityData) — kept at
-// 90 days by default; deletion is destructive, so this stays conservative.
-const ARCHIVE_DAYS = parseInt(process.env.ARCHIVE_DAYS_THRESHOLD || "90", 10);
+// 60 days by default; deletion is destructive, so this stays conservative.
+const ARCHIVE_DAYS = parseInt(process.env.ARCHIVE_DAYS_THRESHOLD || "60", 10);
 // ARCHIVE_MIN_AGE_DAYS governs a separate, much cheaper question: when is a
 // document old enough to get a non-destructive COPY written into MongoDB?
 // Copying is safe to do aggressively (it never removes anything from
@@ -688,7 +688,7 @@ async function deleteSanityAsset(assetId: string): Promise<void> {
 // Even in the rare case a document's ordering shifts oddly, `insertIfNotExists`
 // is idempotent (it upserts by `_sanityId` and skips unchanged documents), so
 // nothing is lost — at worst a document is picked up on the next day's run,
-// which is immaterial for data that's already 90+ days old.
+// which is immaterial for data that's already 60+ days old.
 
 const DEFAULT_ARCHIVE_BATCH_SIZE = parseInt(
   process.env.ARCHIVE_BATCH_SIZE || "200",

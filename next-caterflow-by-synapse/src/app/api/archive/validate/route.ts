@@ -62,7 +62,7 @@ function generateRecommendations(
 
   if (failures.find((c) => c.name.includes("Archive Days Threshold"))) {
     recommendations.push(
-      "Set ARCHIVE_DAYS_THRESHOLD to a reasonable value (90+ days recommended)",
+      "Set ARCHIVE_DAYS_THRESHOLD to a reasonable value (60+ days recommended)",
     );
   }
 

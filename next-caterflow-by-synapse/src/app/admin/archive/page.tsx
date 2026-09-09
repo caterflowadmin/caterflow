@@ -202,7 +202,7 @@ export default function ArchiveManagementPage() {
     onClose: onRestoreModalCloseRaw,
   } = useDisclosure();
 
-  const ARCHIVE_DAYS = Number(process.env.NEXT_PUBLIC_ARCHIVE_DAYS || "90");
+  const ARCHIVE_DAYS = Number(process.env.NEXT_PUBLIC_ARCHIVE_DAYS || "60");
 
   const bgColor = useColorModeValue(
     theme.colors.neutral?.light?.["bg-primary"] || "gray.50",
