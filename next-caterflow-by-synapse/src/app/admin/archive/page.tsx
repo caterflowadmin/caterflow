@@ -146,6 +146,8 @@ export default function ArchiveManagementPage() {
   const [staleDetected, setStaleDetected] = useState(false);
   const [staleResolution, setStaleResolution] = useState<string | null>(null);
   const [resumeTriggered, setResumeTriggered] = useState(false);
+  const [isResumingCleanup, setIsResumingCleanup] = useState(false);
+  const [cleanupResumeTriggered, setCleanupResumeTriggered] = useState(false);
   const [page, setPage] = useState(1);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [showRawLog, setShowRawLog] = useState(false);
@@ -378,6 +380,83 @@ export default function ArchiveManagementPage() {
     }
   }, [currentRun, fetchLogs, isResuming, resumeTriggered, toast]);
 
+  // Mirrors handleAutoResume above, for cleanup runs — previously nothing
+  // drove an incomplete cleanup run forward except an admin manually
+  // clicking "Delete Old Archived Sanity Data" again (which happens to
+  // detect and resume a pending run rather than starting a new one — see
+  // the deleteOld branch of /api/archive/run) or the once-daily cron tick.
+  // For a large backlog needing many checkpointed invocations, that left
+  // the run stalled indefinitely between admin visits. This reuses that
+  // same endpoint (not a separate resume route) specifically because its
+  // pending-resume check already runs first and is already safe to call
+  // without re-confirming: nothing new is being deleted here, only a
+  // previously-approved run already in progress is being continued.
+  const handleAutoResumeCleanup = useCallback(async () => {
+    if (cleanupResumeTriggered || isResumingCleanup) return;
+    if (currentCleanupRun?.status !== "incomplete") return;
+
+    setIsResumingCleanup(true);
+    toast({
+      title: "Resuming cleanup run",
+      description:
+        "An incomplete cleanup run was detected and resume has started.",
+      status: "info",
+      duration: 5000,
+      isClosable: true,
+    });
+
+    try {
+      const res = await fetch("/api/archive/run?deleteOld=true", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.cleanupInProgress) {
+          // Another tab/request is already actively resuming it — not an
+          // error, just nothing for this tab to do.
+          setCleanupResumeTriggered(true);
+          return;
+        }
+        throw new Error(
+          data.errorMessage ||
+            data.error ||
+            "Failed to resume incomplete cleanup run.",
+        );
+      }
+
+      setCleanupResumeTriggered(true);
+      toast({
+        title: "Cleanup resume triggered",
+        description:
+          data.message ||
+          "Resume started. Cleanup will continue in the background.",
+        status: "info",
+        duration: 7000,
+        isClosable: true,
+      });
+      await fetchLogs();
+    } catch (error: any) {
+      console.error("Failed to resume cleanup run:", error);
+      toast({
+        title: "Cleanup resume failed",
+        description:
+          error.message || "Could not resume incomplete cleanup run.",
+        status: "error",
+        duration: 8000,
+        isClosable: true,
+      });
+    } finally {
+      setIsResumingCleanup(false);
+    }
+  }, [
+    cleanupResumeTriggered,
+    currentCleanupRun,
+    fetchLogs,
+    isResumingCleanup,
+    toast,
+  ]);
+
   useEffect(() => {
     if (!isAuthenticated || !isAdmin || !archiveInProgress) return;
 
@@ -417,6 +496,13 @@ export default function ArchiveManagementPage() {
       void handleAutoResume();
     }
   }, [currentRun, handleAutoResume, isAuthenticated, isAdmin]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !isAdmin) return;
+    if (currentCleanupRun?.status === "incomplete") {
+      void handleAutoResumeCleanup();
+    }
+  }, [currentCleanupRun, handleAutoResumeCleanup, isAuthenticated, isAdmin]);
 
   useEffect(() => {
     if (previousArchiveInProgress && !archiveInProgress) {
