@@ -376,7 +376,15 @@ export async function getRecentArchiveRuns(limit = 10) {
   return db
     .collection(COLLECTIONS.ARCHIVE_RUNS)
     .find({
-      $or: [{ kind: { $exists: false } }, { kind: { $ne: "progress" } }],
+      // Exclude both live-progress singleton docs — the archive engine's is
+      // kind: "progress" (_id: "archive-progress"), the cleanup engine's is
+      // kind: "cleanup-progress" (_id: "cleanup-progress"). The cleanup one
+      // was missing here: it isn't a completed run record, it's the SAME
+      // one document being upserted in place while a cleanup is running, so
+      // it leaked into "history" as a duplicate, constantly-mutating row —
+      // and since its kind is "cleanup-progress" (not "cleanup"), it also
+      // rendered as an "Archive" run in the admin UI, not "Delete".
+      kind: { $nin: ["progress", "cleanup-progress"] },
     })
     .sort({ startedAt: -1 })
     .limit(limit)
