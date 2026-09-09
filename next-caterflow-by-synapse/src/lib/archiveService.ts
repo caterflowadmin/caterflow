@@ -1388,7 +1388,28 @@ export async function cleanupCollectionBatched(options: {
       query[safeStatus.field] = { $in: safeStatus.safeValues };
     }
     if (cursor) {
-      query._id = { $gt: new ObjectId(cursor) };
+      // `_id` in these archive collections is the original Sanity document
+      // id (a string — UUID or Sanity's short id format), never a native
+      // MongoDB ObjectId, despite the field being named `_id` — confirmed
+      // directly against production data across every collection here.
+      // `new ObjectId(cursor)` throws on that format ("input must be a 24
+      // character hex string..."), which silently crashed EVERY resume of
+      // a paused cleanup run past its first batch: the exception
+      // propagated out of this whole invocation, was swallowed by the
+      // caller's background .catch() (server-log only, invisible in the
+      // admin UI), and the run was later marked "failed" by the unrelated
+      // 5-minute staleness detector instead of the real cause — so a
+      // multi-batch cleanup could never actually get past its first ~100
+      // documents. Comparing the raw string cursor directly is correct
+      // here; the ObjectId attempt is kept only as a defensive fallback in
+      // case some collection's `_id` really is a native ObjectId.
+      let cursorValue: unknown = cursor;
+      try {
+        cursorValue = new ObjectId(cursor);
+      } catch {
+        cursorValue = cursor;
+      }
+      query._id = { $gt: cursorValue };
     }
 
     let batch: any[];

@@ -20,10 +20,18 @@ jest.mock("next-sanity", () => ({
 
 // The mongodb driver's bson dependency ships an ESM .mjs build that Jest's
 // default transform can't parse either. archiveService.ts only uses
-// `ObjectId` as a value import (Db is type-only), and none of the functions
-// under test here construct one, so a trivial stand-in is enough.
+// `ObjectId` as a value import (Db is type-only). This stand-in replicates
+// the one behavior that actually matters for cleanupCollectionBatched's
+// cursor handling: the real ObjectId throws on anything that isn't a
+// 24-character hex string — which is exactly what a Sanity document id
+// (UUID or short-id format) is not.
 jest.mock("mongodb", () => ({
   ObjectId: function ObjectId(id?: any) {
+    if (id !== undefined && !/^[0-9a-fA-F]{24}$/.test(String(id))) {
+      throw new Error(
+        "input must be a 24 character hex string, 12 byte Uint8Array, or an integer",
+      );
+    }
     return { toString: () => String(id ?? "") };
   },
 }));
@@ -249,6 +257,32 @@ describe("cleanupCollectionBatched", () => {
 
     const query = find.mock.calls[0][0];
     expect(query.status).toEqual({ $in: ["completed", "cancelled"] });
+  });
+
+  // Regression test: every archive collection's `_id` is the original
+  // Sanity document id (a string), never a native MongoDB ObjectId — a
+  // real production bug where resuming a paused cleanup run crashed
+  // immediately (uncaught, swallowed by a background .catch(), later
+  // misreported as generic staleness) because this path unconditionally
+  // did `new ObjectId(cursor)` on a cursor that was never valid ObjectId
+  // input. No prior test ever exercised a non-null resumeCursor at all.
+  it("resumes from a non-ObjectId (Sanity-id-shaped) cursor without throwing", async () => {
+    const { db, find } = createCleanupMockDb();
+    const sanityIdCursor = "12823a30-4437-4228-b743-463e73c1ac3a";
+
+    await expect(
+      cleanupCollectionBatched({
+        db,
+        collectionName: "archived_dispatch_logs",
+        cutoffDate: "2026-01-01T00:00:00.000Z",
+        resumeCursor: sanityIdCursor,
+        checkTimeBudget: () => false,
+        errors: [],
+      }),
+    ).resolves.toBeDefined();
+
+    const query = find.mock.calls[0][0];
+    expect(query._id).toEqual({ $gt: sanityIdCursor });
   });
 
   // Deletes are now issued as ONE Sanity mutation transaction per page,
