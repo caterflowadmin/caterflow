@@ -49,7 +49,11 @@ import {
   normalizeForComparison,
   stableSerialize,
   insertIfNotExists,
+  cleanupCollectionBatched,
+  cleanupArchivedSanityData,
 } from "@/lib/archiveService";
+import { writeClient } from "@/lib/sanity";
+import { getArchiveDb } from "@/lib/mongoClient";
 
 describe("normalizeForComparison / stableSerialize", () => {
   it("produces identical output regardless of top-level key order", () => {
@@ -178,5 +182,180 @@ describe("insertIfNotExists", () => {
     expect(result).toEqual({ inserted: 0, updated: 0, skipped: 0 });
     expect(find).not.toHaveBeenCalled();
     expect(bulkWrite).not.toHaveBeenCalled();
+  });
+});
+
+// cleanupCollectionBatched is what the admin page's "Delete Old Archived
+// Sanity Data" button ultimately drives (via cleanupArchivedSanityData).
+// These tests exist to pin down the one property that actually matters for
+// safety: a Sanity document is only ever a delete candidate because of the
+// MongoDB-side query filter, never because of anything the button itself
+// decided — the button no longer runs an archive pass first (see
+// confirmDeleteOld in the admin page), so this filter is the only thing
+// standing between "old" and "actually archived, finished, and old".
+function createCleanupMockDb() {
+  const toArray = jest.fn().mockResolvedValue([]);
+  const project = jest.fn().mockReturnValue({ toArray });
+  const limit = jest.fn().mockReturnValue({ project });
+  const sort = jest.fn().mockReturnValue({ limit });
+  const find = jest.fn().mockReturnValue({ sort });
+  const updateOne = jest.fn().mockResolvedValue({});
+  const collection = jest.fn().mockReturnValue({ find, updateOne });
+  return { db: { collection } as any, find, toArray, updateOne };
+}
+
+describe("cleanupCollectionBatched", () => {
+  beforeEach(() => {
+    (writeClient.delete as jest.Mock).mockClear();
+  });
+
+  it("queries only Mongo copies that are archived, past cutoff, and not already deleted", async () => {
+    const { db, find } = createCleanupMockDb();
+    const cutoffDate = "2026-01-01T00:00:00.000Z";
+
+    await cleanupCollectionBatched({
+      db,
+      collectionName: "archived_file_attachments",
+      cutoffDate,
+      resumeCursor: null,
+      checkTimeBudget: () => false,
+      errors: [],
+    });
+
+    expect(find).toHaveBeenCalledTimes(1);
+    const query = find.mock.calls[0][0];
+    expect(query).toMatchObject({
+      _isArchived: true,
+      _archivedAt: { $lt: cutoffDate },
+      _sanityDeletedAt: { $exists: false },
+    });
+    // FileAttachments has no workflow status, so DELETE_SAFE_STATUS must not
+    // add a status clause for it.
+    expect(query.status).toBeUndefined();
+  });
+
+  it("additionally requires a finished workflow status for gated collections", async () => {
+    const { db, find } = createCleanupMockDb();
+
+    await cleanupCollectionBatched({
+      db,
+      collectionName: "archived_dispatch_logs",
+      cutoffDate: "2026-01-01T00:00:00.000Z",
+      resumeCursor: null,
+      checkTimeBudget: () => false,
+      errors: [],
+    });
+
+    const query = find.mock.calls[0][0];
+    expect(query.status).toEqual({ $in: ["completed", "cancelled"] });
+  });
+
+  it("deletes from Sanity only the documents Mongo returned as candidates, and marks them in Mongo", async () => {
+    const toArray = jest
+      .fn()
+      .mockResolvedValueOnce([
+        { _id: "mongo-1", _sanityId: "sanity-1" },
+        { _id: "mongo-2", _sanityId: "sanity-2" },
+      ])
+      .mockResolvedValueOnce([]); // second page: none left, loop stops
+    const project = jest.fn().mockReturnValue({ toArray });
+    const limit = jest.fn().mockReturnValue({ project });
+    const sort = jest.fn().mockReturnValue({ limit });
+    const find = jest.fn().mockReturnValue({ sort });
+    const updateOne = jest.fn().mockResolvedValue({});
+    const db = { collection: jest.fn().mockReturnValue({ find, updateOne }) } as any;
+
+    const result = await cleanupCollectionBatched({
+      db,
+      collectionName: "archived_file_attachments",
+      cutoffDate: "2026-01-01T00:00:00.000Z",
+      resumeCursor: null,
+      checkTimeBudget: () => false,
+      errors: [],
+      batchSize: 2,
+    });
+
+    expect(result.deletedCount).toBe(2);
+    expect(writeClient.delete).toHaveBeenCalledTimes(2);
+    expect(writeClient.delete).toHaveBeenCalledWith("sanity-1");
+    expect(writeClient.delete).toHaveBeenCalledWith("sanity-2");
+    expect(updateOne).toHaveBeenCalledWith(
+      { _sanityId: "sanity-1" },
+      { $set: { _sanityDeletedAt: expect.any(String) } },
+    );
+  });
+
+  it("never calls Sanity delete for a candidate with no resolvable _sanityId", async () => {
+    const { db } = createCleanupMockDb();
+    (db.collection as jest.Mock).mockReturnValue({
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          limit: jest.fn().mockReturnValue({
+            project: jest.fn().mockReturnValue({
+              toArray: jest.fn().mockResolvedValue([{ _id: "mongo-1" }]),
+            }),
+          }),
+        }),
+      }),
+      updateOne: jest.fn(),
+    });
+
+    const result = await cleanupCollectionBatched({
+      db,
+      collectionName: "archived_file_attachments",
+      cutoffDate: "2026-01-01T00:00:00.000Z",
+      resumeCursor: null,
+      checkTimeBudget: () => false,
+      errors: [],
+    });
+
+    expect(result.deletedCount).toBe(0);
+    expect(writeClient.delete).not.toHaveBeenCalled();
+  });
+});
+
+// The admin page polls /api/archive/status while a cleanup run is active and
+// renders currentCleanupRun.errors.length unconditionally (no `?.`, no error
+// boundary in src/app). If the progress document cleanupArchivedSanityData
+// writes at the start of a run doesn't include an `errors` array, that
+// render throws for the entire "running" phase — which from the admin's
+// point of view looks exactly like "the delete button doesn't work" (click
+// it, page breaks). This pins down that the field is always present.
+describe("cleanupArchivedSanityData", () => {
+  function createEmptyCandidateCollection() {
+    return {
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          limit: jest.fn().mockReturnValue({
+            project: jest.fn().mockReturnValue({
+              toArray: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      }),
+      updateOne: jest.fn().mockResolvedValue({}),
+    };
+  }
+
+  it("writes an `errors` array on the very first progress update, before any collection is processed", async () => {
+    const progressUpdateOne = jest.fn().mockResolvedValue({});
+    const progressCollection = {
+      updateOne: progressUpdateOne,
+      insertOne: jest.fn().mockResolvedValue({}),
+      findOne: jest.fn().mockResolvedValue(null),
+    };
+    const emptyCollection = createEmptyCandidateCollection();
+    const db = {
+      collection: jest.fn().mockImplementation((name: string) =>
+        name === "archive_runs" ? progressCollection : emptyCollection,
+      ),
+    } as any;
+    (getArchiveDb as jest.Mock).mockResolvedValue(db);
+
+    await cleanupArchivedSanityData("test-run-1");
+
+    const firstUpdateArgs = progressUpdateOne.mock.calls[0];
+    expect(firstUpdateArgs[1].$set.status).toBe("running");
+    expect(firstUpdateArgs[1].$set.errors).toEqual([]);
   });
 });

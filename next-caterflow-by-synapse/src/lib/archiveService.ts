@@ -1347,7 +1347,7 @@ const DELETE_SAFE_STATUS: Partial<
   [COLLECTIONS.INVENTORY_COUNTS]: { field: "status", safeValues: ["completed", "adjusted"] },
 };
 
-async function cleanupCollectionBatched(options: {
+export async function cleanupCollectionBatched(options: {
   db: Db;
   collectionName: string;
   cutoffDate: string;
@@ -1509,6 +1509,14 @@ export async function cleanupArchivedSanityData(
         cutoff,
         completedCollections: Array.from(completedCollections),
         totalCollections: CLEANUP_COLLECTIONS_TO_PROCESS.length,
+        // Must be set here, not just on the incomplete/final writes below —
+        // the admin page polls /api/archive/status and unconditionally
+        // reads currentCleanupRun.errors.length while status is "running",
+        // so an undefined `errors` field on this doc crashes that render
+        // (no error boundary catches it) for the entire duration of a
+        // cleanup run, which looks exactly like "the delete button doesn't
+        // work".
+        errors: [],
         lastUpdatedAt: new Date().toISOString(),
       },
     } as any,
