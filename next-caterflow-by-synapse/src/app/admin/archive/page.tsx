@@ -78,6 +78,13 @@ interface ArchiveStepResult {
 
 interface ArchiveLog {
   _id: string;
+  runId?: string;
+  // Cleanup (the "Delete Old Archived Sanity Data" button) writes its run
+  // records with kind: "cleanup"; archive runs never set `kind` on their
+  // final result, so its absence means "archive". See getRecentArchiveRuns
+  // in archiveQueries.ts and cleanupArchivedSanityData/runArchive in
+  // archiveService.ts.
+  kind?: string;
   runDate: string;
   status: "success" | "partial" | "failed";
   documentsArchived: number;
@@ -1058,6 +1065,13 @@ export default function ArchiveManagementPage() {
     }
   };
 
+  const getRunTypeBadge = (kind?: string) =>
+    kind === "cleanup" ? (
+      <Badge colorScheme="red">Delete</Badge>
+    ) : (
+      <Badge colorScheme="blue">Archive</Badge>
+    );
+
   const renderIncomplete = (run: ArchiveLog) => {
     // Highlight incomplete runs if present
     // Some runs include `incomplete: true` in their payload
@@ -1666,6 +1680,8 @@ export default function ArchiveManagementPage() {
                 <Thead bg={tableHeaderBg}>
                   <Tr>
                     <Th color={textColor}>Date</Th>
+                    <Th color={textColor}>Type</Th>
+                    <Th color={textColor}>Run ID</Th>
                     <Th color={textColor}>Status</Th>
                     <Th color={textColor} isNumeric>
                       Docs Archived
@@ -1714,6 +1730,15 @@ export default function ArchiveManagementPage() {
                       >
                         <Td color={textColorSecondary} whiteSpace="nowrap">
                           {new Date(log.runDate).toLocaleString()}
+                        </Td>
+                        <Td>{getRunTypeBadge(log.kind)}</Td>
+                        <Td
+                          color={textColorSecondary}
+                          fontFamily="mono"
+                          fontSize="xs"
+                          whiteSpace="nowrap"
+                        >
+                          {log.runId || "—"}
                         </Td>
                         <Td>
                           <HStack spacing={2}>
@@ -1790,7 +1815,7 @@ export default function ArchiveManagementPage() {
                   {/* Pagination Controls */}
                   {logs.length > rowsPerPage && (
                     <Tr>
-                      <Td colSpan={9} textAlign="right">
+                      <Td colSpan={11} textAlign="right">
                         <Button
                           size="sm"
                           onClick={() => setPage((p) => Math.max(p - 1, 1))}
@@ -1826,6 +1851,12 @@ export default function ArchiveManagementPage() {
             <Heading as="h3" size="md" color={textColor}>
               Run details for {new Date(selectedRun.runDate).toLocaleString()}
             </Heading>
+            <HStack mt={2} spacing={2}>
+              {getRunTypeBadge(selectedRun.kind)}
+              <Text fontFamily="mono" fontSize="sm" color={textColorSecondary}>
+                {selectedRun.runId || "no run ID recorded"}
+              </Text>
+            </HStack>
           </CardHeader>
           <CardBody>
             <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4} mb={4}>
@@ -1982,9 +2013,15 @@ export default function ArchiveManagementPage() {
           <ModalBody>
             {selectedRun ? (
               <Box>
-                <Text mb={4} color={textColorSecondary}>
+                <Text mb={2} color={textColorSecondary}>
                   {new Date(selectedRun.runDate).toLocaleString()}
                 </Text>
+                <HStack mb={4} spacing={2}>
+                  {getRunTypeBadge(selectedRun.kind)}
+                  <Text fontFamily="mono" fontSize="sm" color={textColorSecondary}>
+                    {selectedRun.runId || "no run ID recorded"}
+                  </Text>
+                </HStack>
                 <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} mb={4}>
                   <Stat>
                     <StatLabel>Status</StatLabel>
