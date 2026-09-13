@@ -9,6 +9,7 @@
     "lint": "next lint",
     "test:archive-resume": "node ./scripts/test_archive_resume.js",
     "archive:clear-lock": "node ./scripts/clear_archive_lock.js",
+    "mongo:migrate": "node ./scripts/migrate_mongo.js",
     "test:unit": "jest --config=jest.config.ts --passWithNoTests",
     "test:e2e": "playwright test",
     "test": "npm run test:unit && npm run test:e2e"
