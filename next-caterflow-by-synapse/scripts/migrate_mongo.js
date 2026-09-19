@@ -35,20 +35,50 @@ const DATABASE_NAME =
 // Target is a free-tier (M0) shared cluster: keep batches small, throttle
 // between writes, and use a tiny connection pool so we don't trip Atlas's
 // "SystemOverloadedError" connection-shedding under a bulk-write burst.
+//
+// M0-to-M0 throughput between these clusters has been observed as low as
+// ~80KB/s (region/tier throttling, not a local network problem — confirmed
+// separately against a CDN at ~950KB/s). A flat 100-document batch size is
+// fine for small documents but disastrous for collections with large
+// documents (e.g. stock_baselines averages ~2.4MB/doc): a 100-doc getMore
+// there would need to move ~240MB, which blows both the 30s socket timeout
+// and MongoDB's ~48MB max message size. So batch size is computed per
+// collection from its average document size to target a roughly constant
+// number of bytes per round trip instead of a constant document count.
 const BATCH_SIZE = 100;
+const TARGET_BATCH_BYTES = 3 * 1024 * 1024; // ~3MB per read/write round trip
 const BATCH_DELAY_MS = 250;
 const MAX_COLLECTION_ATTEMPTS = 10;
 const OVERLOAD_BASE_DELAY_MS = 10000;
+// Observed failure mode on this link: a large-document read/write
+// occasionally goes fully silent — the TCP socket stays ESTABLISHED with 0%
+// CPU and no data flowing, and neither socketTimeoutMS nor any driver error
+// ever fires (consistent with a path MTU black hole silently dropping large
+// TLS records rather than a clean reset). A per-operation watchdog is the
+// only thing that can catch this: if a single read or write batch doesn't
+// settle within OP_STALL_MS, treat it as dead and force a full reconnect.
+const OP_STALL_MS = 90000;
 
 const mongoOptions = {
   maxPoolSize: 3,
   minPoolSize: 0,
   serverSelectionTimeoutMS: 15000,
-  connectTimeoutMS: 15000,
-  socketTimeoutMS: 30000,
+  connectTimeoutMS: 20000,
+  // At the slow end of observed throughput (~80KB/s), a single
+  // TARGET_BATCH_BYTES (~3MB) round trip can take ~40s. 120s leaves
+  // generous headroom without masking a truly dead connection.
+  socketTimeoutMS: 120000,
   retryWrites: true,
   retryReads: true,
 };
+
+// Picks a batch size (document count) that keeps each read/write round trip
+// to roughly TARGET_BATCH_BYTES, so slow links don't time out on
+// large-document collections and message-size limits aren't hit.
+function computeBatchSize(avgObjSize) {
+  if (!avgObjSize || avgObjSize <= 0) return BATCH_SIZE;
+  return Math.max(1, Math.min(BATCH_SIZE, Math.floor(TARGET_BATCH_BYTES / avgObjSize)));
+}
 
 if (!SOURCE_URI || !TARGET_URI) {
   console.error(
@@ -71,13 +101,49 @@ function isOverloadError(err) {
   return /SystemOverloadedError/i.test(String((err && err.message) || ''));
 }
 
+class StallTimeoutError extends Error {
+  constructor(label, ms) {
+    super(`${label} stalled: no response after ${ms}ms (connection likely dead)`);
+    this.name = 'StallTimeoutError';
+  }
+}
+
+// Races a driver operation against a watchdog timer. If the watchdog fires
+// first, the original promise is abandoned (its eventual settlement is
+// swallowed so it can't crash the process with an unhandled rejection once
+// the caller has force-closed the connection it was waiting on).
+function withStallWatchdog(promise, label) {
+  let settled = false;
+  const guarded = promise.then(
+    (v) => { settled = true; return v; },
+    (e) => { settled = true; throw e; }
+  );
+  guarded.catch(() => {});
+  let timer;
+  const watchdog = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      if (!settled) reject(new StallTimeoutError(label, OP_STALL_MS));
+    }, OP_STALL_MS);
+  });
+  return Promise.race([guarded, watchdog]).finally(() => clearTimeout(timer));
+}
+
 function isTransientNetworkError(err) {
   const msg = String((err && err.message) || '');
+  const labels = err?.errorLabelSet || err?.cause?.errorLabelSet;
   return (
+    err?.name === 'StallTimeoutError' ||
     err?.name === 'MongoNetworkError' ||
+    err?.name === 'MongoNetworkTimeoutError' ||
     err?.name === 'MongoServerSelectionError' ||
+    // The driver itself flags a write as safe to retry via errorLabelSet —
+    // more reliable than matching on error class name/message, which is
+    // what MongoNetworkTimeoutError slipped through before (its name and
+    // message don't match ETIMEDOUT/MongoNetworkError text, even though the
+    // driver already knows it's retryable).
+    (labels && typeof labels.has === 'function' && labels.has('RetryableWriteError')) ||
     isOverloadError(err) ||
-    /EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|getaddrinfo|MongoNetworkError|MongoServerSelectionError|socket hang up|connection.*closed|topology.*closed|SSL routines|tlsv1 alert/i.test(
+    /EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|getaddrinfo|MongoNetworkError|MongoNetworkTimeoutError|MongoServerSelectionError|socket hang up|connection.*closed|topology.*closed|SSL routines|tlsv1 alert|timed out/i.test(
       msg
     )
   );
@@ -132,6 +198,18 @@ async function copyCollectionOnce(sourceDb, targetDb, name) {
     return { name, sourceCount, copied: 0, dryRun: true };
   }
 
+  let avgObjSize = 0;
+  try {
+    const stats = await sourceDb.command({ collStats: name });
+    avgObjSize = stats.avgObjSize || 0;
+  } catch {
+    // collStats can fail on an empty/missing collection; fall back to the default batch size.
+  }
+  const batchSize = computeBatchSize(avgObjSize);
+  if (batchSize < BATCH_SIZE) {
+    console.log(`  ${name}: large documents (avg ~${Math.round(avgObjSize / 1024)}KB), using batch size ${batchSize}`);
+  }
+
   if (FORCE && existingTargetCount > 0) {
     console.log(`  Dropping existing target collection ${name} (${existingTargetCount} document(s))...`);
     await targetCollection.drop();
@@ -142,18 +220,18 @@ async function copyCollectionOnce(sourceDb, targetDb, name) {
   const indexCount = await copyIndexes(sourceCollection, targetCollection);
 
   let copied = 0;
-  const cursor = sourceCollection.find({}, { batchSize: BATCH_SIZE });
+  const cursor = sourceCollection.find({}, { batchSize });
   let batch = [];
-  while (await cursor.hasNext()) {
-    batch.push(await cursor.next());
-    if (batch.length >= BATCH_SIZE) {
-      copied += await insertBatchTolerant(targetCollection, batch);
+  while (await withStallWatchdog(cursor.hasNext(), `${name}: read`)) {
+    batch.push(await withStallWatchdog(cursor.next(), `${name}: read`));
+    if (batch.length >= batchSize) {
+      copied += await withStallWatchdog(insertBatchTolerant(targetCollection, batch), `${name}: write`);
       batch = [];
       await sleep(BATCH_DELAY_MS);
     }
   }
   if (batch.length > 0) {
-    copied += await insertBatchTolerant(targetCollection, batch);
+    copied += await withStallWatchdog(insertBatchTolerant(targetCollection, batch), `${name}: write`);
   }
 
   const targetCount = await targetCollection.countDocuments();
@@ -165,18 +243,29 @@ async function copyCollectionOnce(sourceDb, targetDb, name) {
   return { name, sourceCount, copied, targetCount };
 }
 
-async function copyCollection(sourceDb, targetDb, name) {
+async function copyCollection(ctx, name) {
   for (let attempt = 1; attempt <= MAX_COLLECTION_ATTEMPTS; attempt++) {
     try {
-      return await copyCollectionOnce(sourceDb, targetDb, name);
+      return await copyCollectionOnce(ctx.sourceDb, ctx.targetDb, name);
     } catch (err) {
       if (attempt >= MAX_COLLECTION_ATTEMPTS || !isTransientNetworkError(err)) throw err;
       const overloaded = isOverloadError(err);
+      const stalled = err?.name === 'StallTimeoutError';
       const base = overloaded ? OVERLOAD_BASE_DELAY_MS : 2000;
       const delay = Math.min(overloaded ? 120000 : 30000, base * 2 ** (attempt - 1));
       console.log(
-        `  ${name}: ${overloaded ? 'target overloaded' : 'transient error'} (${firstLine(err.message)}), retrying in ${Math.round(delay / 1000)}s (attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS})...`
+        `  ${name}: ${stalled ? 'stalled connection' : overloaded ? 'target overloaded' : 'transient error'} (${firstLine(err.message)}), retrying in ${Math.round(delay / 1000)}s (attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS})...`
       );
+      // A stalled socket can sit ESTABLISHED-but-dead indefinitely, so retrying
+      // on the same connection pool would just hang again. Force a clean
+      // reconnect on any transient error so every retry starts with fresh
+      // sockets. Reconnecting itself can fail (also transient); let that
+      // surface as this attempt's failure rather than crashing the run.
+      try {
+        await ctx.reconnect();
+      } catch (reconnectErr) {
+        console.log(`  ${name}: reconnect failed (${firstLine(reconnectErr.message)}), will retry anyway`);
+      }
       await sleep(delay);
     }
   }

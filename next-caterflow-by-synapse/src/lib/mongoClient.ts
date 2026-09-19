@@ -24,12 +24,22 @@ const dbName = process.env.DATABASE_NAME || process.env.MONGODB_DB_NAME || 'cate
 // if Atlas's Network Access list doesn't include Vercel's IPs, or the
 // cluster is undersized/in a different region than the function, these
 // timeouts will still eventually trigger, just faster and more gracefully.
+// connectTimeoutMS/socketTimeoutMS were lowered from 8000/20000 — production
+// logs showed MongoNetworkTimeoutError stalls, and at the old socketTimeoutMS
+// a single stuck operation inside an unbudgeted per-document loop (see
+// archiveService.ts's insertIfNotExists/cleanupCollectionBatched fallback
+// paths) could eat up to 20s before failing, which is enough for a handful
+// of stalls in one batch to blow through Vercel's 300s hard timeout with no
+// checkpoint saved. Lower values fail fast enough for the surrounding
+// time-budget checks and retry logic to actually get a turn, at the cost of
+// misclassifying a genuinely slow-but-successful op as a failure sooner —
+// don't lower further without confirming the actual cluster tier/health.
 const mongoOptions: MongoClientOptions = {
     maxPoolSize: 10,
     minPoolSize: 0,
     serverSelectionTimeoutMS: 8000,
-    connectTimeoutMS: 8000,
-    socketTimeoutMS: 20000,
+    connectTimeoutMS: 5000,
+    socketTimeoutMS: 12000,
     retryWrites: true,
     retryReads: true,
 };

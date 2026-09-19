@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Quotation — Full Sanity-to-MongoDB Migration</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; color:#1a1a1a; font-size:12px; padding:14mm 16mm; }
+  header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; }
+  .logo { font-size:26px; font-weight:800; letter-spacing:1px; }
+  .logo sup { font-size:14px; }
+  .doc-meta { text-align:right; font-size:11px; line-height:1.5; }
+  .doc-meta h1 { font-size:20px; text-transform:uppercase; font-weight:600; margin-bottom:4px; }
+  p.intro { font-size:11.5px; line-height:1.5; margin: 10px 0 14px 0; }
+  table.items { width:100%; border-collapse:collapse; margin-bottom:10px; font-size:11px; }
+  table.items th, table.items td { border:1px solid #ccc; padding:8px 7px; text-align:left; vertical-align:top; }
+  table.items th { background:#f0f0f0; font-weight:600; }
+  .amount-col { text-align:right; white-space:nowrap; }
+  tr.subtotal td { font-weight:700; background:#fafafa; }
+  h2.section { font-size:13px; text-transform:none; font-weight:700; margin:16px 0 6px 0; }
+  ul.scope { margin-left:18px; font-size:11px; line-height:1.5; margin-bottom:10px; }
+  .notes-box { border-left:3px solid #000; background:#f9f9f9; padding:10px 12px; font-size:11px; line-height:1.5; margin-bottom:12px; }
+  .notes-box ul { margin-left:16px; }
+  table.phases { width:100%; border-collapse:collapse; margin:8px 0 12px 0; font-size:11px; }
+  table.phases th, table.phases td { border:1px solid #ccc; padding:7px; text-align:left; }
+  table.phases th { background:#f0f0f0; }
+  .acceptance-title { font-size:13px; font-weight:700; margin:20px 0 8px 0; }
+  .acceptance-block { border:1px solid #ccc; padding:14px 16px; margin-bottom:6px; }
+  .acceptance-row { display:flex; gap:40px; margin-top:36px; }
+  .acceptance-row.initial-row { margin-top:10px; }
+  .sig-block { width:260px; }
+  .sig-line { border-top:1px solid #999; padding-top:6px; font-size:10px; text-transform:uppercase; color:#555; }
+  .date-line { border-top:1px solid #999; width:150px; padding-top:6px; margin-top:22px; font-size:10px; text-transform:uppercase; color:#555; }
+  .initial-line { border-top:1px solid #999; width:140px; padding-top:6px; font-size:10px; text-transform:uppercase; color:#555; white-space:nowrap; }
+  .payment-box { margin-top:16px; padding:10px 12px; background:#f9f9f9; border-left:3px solid #000; font-size:11px; line-height:1.6; }
+  .bank-highlight { background:#fff2cc; padding:1px 3px; font-weight:600; }
+  .range { color:#555; font-weight:400; font-size:10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">(GS)<sup>2</sup></div>
+  <div class="doc-meta">
+    <h1>Quotation</h1>
+    <div><strong>To:</strong> Eclipse Catering</div>
+    <div><strong>From:</strong> G-Solutions² (godlinessdongorere@gmail.com)</div>
+    <div><strong>Date:</strong> September 15, 2026</div>
+    <div><strong>Quote Ref:</strong> CATERFLOW-MIGRATION-2026-09-15</div>
+  </div>
+</header>
+
+<p class="intro">This quotation covers a full migration of CaterFlow's data layer off Sanity CMS onto MongoDB only — removing Sanity Studio, the Sanity dataset, and all Sanity dependencies from the live application, including rebuilding authentication, file/image storage, and an admin data-browsing capability to replace what Sanity Studio currently provides. Scope was estimated directly from the codebase (see below), and is offered here as a fixed project fee rather than open-ended hourly billing, at a discounted project rate given the size and duration of the engagement.</p>
+
+<h2 class="section">Why this is a big job (scope found in the codebase)</h2>
+<ul class="scope">
+  <li>The Next.js app currently reads/writes Sanity in <strong>64 files</strong>, primarily the entire API layer (54 route files) — there are <strong>~194 GROQ queries</strong> and <strong>~211 Sanity fetch calls</strong> to rewrite individually as MongoDB queries/aggregations, since GROQ's reference joins have no drop-in equivalent.</li>
+  <li>Sanity Studio defines <strong>24 schema/document types</strong> (StockItem, PurchaseOrder, GoodsReceipt, InventoryCount, DispatchLog, InternalTransfer, StockAdjustment, Supplier, Site, AppUser, and more) with relational references between them — these need to be redesigned as MongoDB collections with an equivalent referential-integrity strategy.</li>
+  <li><strong>Login/auth is backed by Sanity</strong> (the AppUser document type) — this migration includes rebuilding authentication end-to-end, not just moving operational data.</li>
+  <li>The current production dataset holds roughly <strong>24,800+ documents</strong> to migrate and validate (601 stock items, 34 users, 18 bins, 17 suppliers, 16 categories, 8 sites, plus thousands of nested transaction records).</li>
+  <li>Sanity's file/image CDN pipeline needs a replacement storage provider (e.g. S3, Cloudinary, or UploadThing), and Sanity Studio's admin editing UI needs at least a minimal equivalent so data can still be browsed/corrected without direct database access.</li>
+  <li>The app already has a separate, narrow MongoDB integration (used only for the Archive Run History feature) — this gives us working connection/driver plumbing and ETL script patterns to build on, but none of the live operational data is modeled in Mongo today.</li>
+</ul>
+
+<table class="items">
+  <thead>
+    <tr><th style="width:40%;">Workstream</th><th style="width:20%;">Est. Hours</th><th style="width:15%;">Project Rate (SZL)</th><th style="width:25%;">Fee (SZL)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Mongo schema/model design</strong><br>Design MongoDB collections for all 24 domain types, including the referential-integrity strategy to replace Sanity's reference fields.</td>
+      <td>10–14</td><td class="amount-col">170</td><td class="amount-col">2,000</td>
+    </tr>
+    <tr>
+      <td><strong>Data migration &amp; validation</strong><br>Export/transform/import scripts (extending the existing Mongo ETL scripts in this repo) to move ~24,800 documents, remap IDs, resolve references, and verify record counts/integrity post-migration.</td>
+      <td>10–14</td><td class="amount-col">170</td><td class="amount-col">2,000</td>
+    </tr>
+    <tr>
+      <td><strong>Authentication rewrite</strong><br>Move login, password reset, verification codes, and role checks from Sanity's AppUser type to a MongoDB users collection; re-test every auth-gated route.</td>
+      <td>6–8</td><td class="amount-col">170</td><td class="amount-col">1,200</td>
+    </tr>
+    <tr>
+      <td><strong>API route rewrite</strong><br>Rewrite all 54 API routes (~194 GROQ queries) as MongoDB queries/aggregation pipelines across procurement, stock, dispatch, transfers, purchase orders, goods receipt, and reporting.</td>
+      <td>40–55</td><td class="amount-col">170</td><td class="amount-col">8,000</td>
+    </tr>
+    <tr>
+      <td><strong>File/image storage replacement</strong><br>Integrate a new storage provider to replace Sanity's asset/CDN pipeline for uploaded files and images.</td>
+      <td>6–10</td><td class="amount-col">170</td><td class="amount-col">1,400</td>
+    </tr>
+    <tr>
+      <td><strong>Admin data-browsing UI</strong><br>Minimal internal screen(s) to view/edit raw records directly, replacing what Sanity Studio currently provides for that purpose.</td>
+      <td>8–14</td><td class="amount-col">170</td><td class="amount-col">1,900</td>
+    </tr>
+    <tr>
+      <td><strong>Testing &amp; QA</strong><br>Full regression pass across procurement, stock counts, dispatch, transfers, purchase orders, and reports after the rewrite.</td>
+      <td>12–18</td><td class="amount-col">170</td><td class="amount-col">2,500</td>
+    </tr>
+    <tr>
+      <td><strong>Cutover &amp; decommission</strong><br>Production cutover, rollback plan, and retiring the Sanity project/subscription once verified.</td>
+      <td>4–6</td><td class="amount-col">170</td><td class="amount-col">1,000</td>
+    </tr>
+    <tr class="subtotal">
+      <td colspan="2">Fixed Project Fee <span class="range">(96–139 hrs estimated; billed as one fixed total, not hourly)</span></td>
+      <td></td>
+      <td class="amount-col">20,000</td>
+    </tr>
+  </tbody>
+</table>
+<p style="font-size:10.5px; color:#555; margin-bottom:10px;">This is a fixed price, not an estimate — the SZL 20,000 total will not change once accepted, even if actual hours run toward the higher end of the range above. The project rate shown (SZL 170/hr) is discounted from G-Solutions²'s standard rate in exchange for the size and multi-month duration of this engagement.</p>
+
+<h2 class="section">Recommended phasing</h2>
+<table class="phases">
+  <thead><tr><th style="width:18%;">Phase</th><th>Covers</th></tr></thead>
+  <tbody>
+    <tr><td>1. Foundation</td><td>Mongo schema design, auth rewrite, migration scripts run against a staging dataset. Nothing client-facing changes yet.</td></tr>
+    <tr><td>2. Core operations</td><td>Rewrite the highest-traffic routes first: stock, procurement, purchase orders, goods receipt.</td></tr>
+    <tr><td>3. Remaining routes &amp; admin UI</td><td>Dispatch, transfers, reports, and the admin data-browsing screens.</td></tr>
+    <tr><td>4. QA &amp; cutover</td><td>Full regression, production data migration, go-live, Sanity decommission.</td></tr>
+  </tbody>
+</table>
+<p style="font-size:11px; margin-bottom:10px;">Phasing lets CaterFlow keep running on Sanity throughout most of the project and cut over only once each phase is verified, rather than one high-risk single switchover.</p>
+
+<h2 class="section">Ongoing hosting — MongoDB Atlas</h2>
+<p style="margin:0 0 8px 0; font-size:11px; line-height:1.5;">Once CaterFlow runs on MongoDB only, the database is hosted on MongoDB Atlas. Atlas pricing is set and billed directly by MongoDB, separately from this quote — G-Solutions² does not mark it up. The current archive cluster runs comfortably on a free/low tier; a paid tier only becomes necessary if data volume, connections, or throughput grow beyond that once all live operational data moves in.</p>
+<table class="phases">
+  <thead><tr><th style="width:18%;">Resource</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>MongoDB Pricing</td><td><a href="https://www.mongodb.com/pricing" target="_blank">mongodb.com/pricing</a> — current Atlas tiers and rates, checked at quote time.</td></tr>
+  </tbody>
+</table>
+<p style="font-size:11px; margin-bottom:10px;">We recommend reviewing actual usage against these tiers after Phase 1 (once real data volumes are migrated) before committing to a paid plan.</p>
+
+<div class="notes-box">
+  <strong>Notes</strong>
+  <ul>
+    <li>This quote is for development time only. It excludes any new third-party service costs this migration requires — MongoDB Atlas hosting (see above) and file/image storage (e.g. S3, Cloudinary, or UploadThing) — those are billed directly to that provider, similarly to how EmailJS is handled in the July 2026 quote.</li>
+    <li>Cancelling the Sanity project once migration is complete removes any ongoing Sanity plan/subscription fee — this is a recurring cost saving on top of the one-time migration fee.</li>
+    <li>The SZL 20,000 fixed fee is billed in milestones: SZL 10,000 (50%) deposit before work begins, SZL 5,000 on completion of Phase 2, SZL 5,000 on go-live after Phase 4 QA sign-off.</li>
+    <li><strong>Work will only commence once the SZL 10,000 (50%) deposit has been received AND this quotation has been signed and returned to G-Solutions².</strong></li>
+    <li>At the same after-hours/weekend pace as prior work, this project is expected to take roughly 4–6 months from kickoff to full cutover. A faster timeline is possible if more hours/week are agreed and priced accordingly.</li>
+  </ul>
+</div>
+
+<div class="acceptance-title">Acceptance</div>
+<div class="acceptance-block">
+  <div class="acceptance-row">
+    <div class="sig-block">
+      <div class="initial-line">Client Initial</div>
+      <div class="sig-line" style="margin-top:26px;">Client Signature</div>
+      <div class="date-line">Date</div>
+    </div>
+    <div class="sig-block">
+      <div class="initial-line">G-Solutions² Initial</div>
+      <div class="sig-line" style="margin-top:26px;">G-Solutions² Signature</div>
+      <div class="date-line">Date</div>
+    </div>
+  </div>
+</div>
+
+<div class="payment-box">
+  <strong>Payment:</strong> A 50% deposit (SZL 10,000) is due, and this quotation must be signed and returned, before any work begins. Remaining milestone invoices issued per the schedule above. Payment via EFT to G-Solutions².<br>
+  <strong>Bank:</strong> FNB Eswatini &nbsp; <strong>Account No:</strong> <span class="bank-highlight">62630599902</span>
+</div>
+
+</body>
+</html>

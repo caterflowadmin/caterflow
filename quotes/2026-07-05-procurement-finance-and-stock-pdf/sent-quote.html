@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; color:#1a1a1a; font-size:12px; padding:14mm 16mm; }
+  header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; }
+  .logo { font-size:26px; font-weight:800; letter-spacing:1px; }
+  .logo sup { font-size:14px; }
+  .doc-meta { text-align:right; font-size:11px; line-height:1.5; }
+  .doc-meta h1 { font-size:20px; text-transform:uppercase; font-weight:600; margin-bottom:4px; }
+  p.intro { font-size:11.5px; line-height:1.5; margin: 10px 0 14px 0; }
+  table.items { width:100%; border-collapse:collapse; margin-bottom:10px; font-size:11px; }
+  table.items th, table.items td { border:1px solid #ccc; padding:8px 7px; text-align:left; vertical-align:top; }
+  table.items th { background:#f0f0f0; font-weight:600; }
+  .amount-col { text-align:right; white-space:nowrap; }
+  tr.subtotal td { font-weight:700; background:#fafafa; }
+  h2.section { font-size:13px; text-transform:none; font-weight:700; margin:16px 0 6px 0; }
+  ul.scope { margin-left:18px; font-size:11px; line-height:1.5; margin-bottom:10px; }
+  .notes-box { border-left:3px solid #000; background:#f9f9f9; padding:10px 12px; font-size:11px; line-height:1.5; margin-bottom:12px; }
+  .notes-box ul { margin-left:16px; }
+  table.email { width:100%; border-collapse:collapse; margin:8px 0 12px 0; font-size:11px; }
+  table.email th, table.email td { border:1px solid #ccc; padding:7px; text-align:left; }
+  table.email th { background:#f0f0f0; }
+  .acceptance-title { font-size:13px; font-weight:700; margin:20px 0 8px 0; }
+  .acceptance-block { border:1px solid #ccc; padding:14px 16px; margin-bottom:6px; }
+  .acceptance-row { display:flex; gap:40px; margin-top:36px; }
+  .acceptance-row.initial-row { margin-top:10px; }
+  .sig-block { width:260px; }
+  .sig-line { border-top:1px solid #999; padding-top:6px; font-size:10px; text-transform:uppercase; color:#555; }
+  .date-line { border-top:1px solid #999; width:150px; padding-top:6px; margin-top:22px; font-size:10px; text-transform:uppercase; color:#555; }
+  .initial-line { border-top:1px solid #999; width:140px; padding-top:6px; font-size:10px; text-transform:uppercase; color:#555; white-space:nowrap; }
+  .payment-box { margin-top:16px; padding:10px 12px; background:#f9f9f9; border-left:3px solid #000; font-size:11px; line-height:1.6; }
+  .bank-highlight { background:#fff2cc; padding:1px 3px; font-weight:600; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">(GS)<sup>2</sup></div>
+  <div class="doc-meta">
+    <h1>Quotation</h1>
+    <div><strong>To:</strong> Eclipse Catering</div>
+    <div><strong>From:</strong> G-Solutions² (godlinessdongorere@gmail.com)</div>
+    <div><strong>Date:</strong> September 13, 2026</div>
+    <div><strong>Quote Ref:</strong> CATERFLOW-ADJ-2026-07-05</div>
+  </div>
+</header>
+
+<p class="intro">This quotation includes ONLY the two requested one-time adjustments. It excludes subscriptions, monthly fees, and ongoing support.</p>
+
+<table class="items">
+  <thead>
+    <tr><th style="width:32%;">Description</th><th style="width:38%;">Deliverables</th><th style="width:12%;">One-time Fee (SZL)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Procurement → Finance approval workflow</strong><br>Add 'Send to Finance' action after requisition summary generation; create API route, approval record, and notification hook for Finance review.</td>
+      <td>API route, UI button, approval workflow item, Finance email trigger, role-based access, and validation.</td>
+      <td class="amount-col">4,000</td>
+    </tr>
+    <tr>
+      <td><strong>Stock Count PDF export (including variances)</strong><br>Add Export-to-PDF on Stock Count page with all variance rows, a printer-safe layout, and summary totals.</td>
+      <td>UI button, printable HTML/PDF content, variances table, custom formatting, and cross-browser QA.</td>
+      <td class="amount-col">2,500</td>
+    </tr>
+    <tr class="subtotal">
+      <td colspan="2">Subtotal</td>
+      <td class="amount-col">6,500</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 class="section">Scope of Work</h2>
+<ul class="scope">
+  <li><strong>Procurement → Finance approval workflow:</strong> add the UI button, connect it to requisition summary generation, implement a protected API route, create a Finance approval record, add role-based access, store audit details, trigger an EmailJS notification template, and validate success/failure states.</li>
+  <li><strong>Stock Count PDF export:</strong> add export controls, capture count and variance data, build a printer-safe HTML/PDF layout with headers/footers, include all variance rows and totals, and test print preview and browser compatibility.</li>
+</ul>
+
+<div class="notes-box">
+  <strong>Notes</strong>
+  <ul>
+    <li>Implementation estimate: ~16–18 developer hours total, expected to be completed within 3 weeks to 1 month due to after-hours and weekend availability.</li>
+    <li>Client acceptance of this quotation authorises G-Solutions² to begin work. A signed acceptance or written confirmation via email is required.</li>
+    <li>This quote does not include any subscription, hosting, or Sanity plan fees. Any additional feature requests will be quoted separately.</li>
+    <li>If a server-generated PDF is required (instead of client-side print), additional server work and infra may be necessary—quoted separately.</li>
+    <li><strong>Work will only commence once the SZL 4,000 deposit has been received AND this quotation has been signed and returned to G-Solutions².</strong></li>
+  </ul>
+</div>
+
+<h2 class="section">Email delivery (optional) — EmailJS</h2>
+<p style="font-size:11px; line-height:1.5; margin-bottom:8px;">We recommend EmailJS for the Finance notification email so the client can send email without exposing server-side credentials. EmailJS pricing is separate; G-Solutions² will configure the integration, but EmailJS charges are paid directly to EmailJS.</p>
+
+<table class="email">
+  <thead><tr><th style="width:18%;">Plan (EmailJS)</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Free</td><td>Starter tier — limited templates and send limits, useful for proof-of-concept or low-volume notifications.</td></tr>
+    <tr><td>Paid Plans</td><td>Higher send limits, custom domain support, security features and better production reliability. See EmailJS pricing page for current rates.</td></tr>
+  </tbody>
+</table>
+
+<p style="font-size:11px; margin-bottom:10px;">If you prefer, we can set up EmailJS and provide a separate recommendation for the right plan based on your expected volume.</p>
+
+<div class="acceptance-title">Acceptance</div>
+<div class="acceptance-block">
+  <div class="acceptance-row">
+    <div class="sig-block">
+      <div class="initial-line">Client Initial</div>
+      <div class="sig-line" style="margin-top:26px;">Client Signature</div>
+      <div class="date-line">Date</div>
+    </div>
+    <div class="sig-block">
+      <div class="initial-line">G-Solutions² Initial</div>
+      <div class="sig-line" style="margin-top:26px;">G-Solutions² Signature</div>
+      <div class="date-line">Date</div>
+    </div>
+  </div>
+</div>
+
+<div class="payment-box">
+  <strong>Payment:</strong> One-time invoice will be issued on acceptance. Payment via EFT to G-Solutions².<br>
+  <strong>Bank:</strong> FNB Eswatini &nbsp; <strong>Account No:</strong> <span class="bank-highlight">62630599902</span>
+</div>
+
+</body>
+</html>

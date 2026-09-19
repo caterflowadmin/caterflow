@@ -1,0 +1,269 @@
+/* css/styles.css */
+
+:root {
+    /* Color Palette */
+    --primary: #0067FF;
+    --primary-dark: #0052CC;
+    --primary-light: #66A3FF;
+    --secondary: #64748b;
+    --light: #F5F7FA;
+    --dark: #151515;
+    --success: #299C00;
+    --warning: #FF6300;
+    --danger: #ef4444;
+
+    /* Backgrounds */
+    --bg-primary: var(--light);
+    --bg-secondary: #FFFFFF;
+    --bg-card: #FFFFFF;
+    --bg-header: #FFFFFF;
+    --bg-gradient: linear-gradient(120deg, var(--primary), var(--primary-dark));
+
+    /* Text Colors */
+    --text-primary: #151515;
+    --text-secondary: #4A5568;
+    --text-on-brand: #FFFFFF;
+    --link-color: var(--primary);
+
+    /* Borders & Shadows */
+    --border-color: #E2E8F0;
+    --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    --card-shadow-hover: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* Base Styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    transition: all 0.2s ease-in-out;
+}
+
+body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    font-size: 16px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Roboto', sans-serif;
+    color: var(--primary-dark);
+    margin-bottom: 0.5em;
+}
+
+h1 { font-size: 2.5em; }
+h2 { font-size: 2em; }
+h3 { font-size: 1.5em; }
+
+a {
+    color: var(--link-color);
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline;
+}
+
+/* Layout Components */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+    flex-grow: 1;
+}
+
+.card {
+    background-color: var(--bg-card);
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: var(--card-shadow);
+    margin-bottom: 2rem;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card:hover {
+    transform: translateY(-5px);
+    box-shadow: var(--card-shadow-hover);
+}
+
+/* Header & Footer */
+header {
+    background: var(--bg-gradient);
+    color: var(--text-on-brand);
+    padding: 1.5rem 2rem;
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+header h1 {
+    color: var(--text-on-brand);
+}
+
+footer {
+    text-align: center;
+    padding: 2rem;
+    margin-top: auto;
+    color: var(--text-secondary);
+    border-top: 1px solid var(--border-color);
+}
+
+/* Specific Components */
+.button {
+    display: inline-block;
+    padding: 12px 25px;
+    background-color: var(--primary);
+    color: var(--text-on-brand);
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: bold;
+}
+.button:hover {
+    background-color: var(--primary-dark);
+}
+
+.button-secondary {
+    background-color: var(--secondary);
+}
+
+.button-secondary:hover {
+    background-color: #4b5563;
+}
+
+.logo {
+    display: block;
+    margin: 0 auto 20px;
+}
+
+.step-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 1.5rem;
+    padding: 1.5rem;
+    background-color: var(--bg-secondary);
+    border-radius: 8px;
+    box-shadow: var(--card-shadow);
+    margin-bottom: 1.5rem;
+}
+
+.step-number {
+    width: 40px;
+    height: 40px;
+    background-color: var(--primary);
+    color: var(--text-on-brand);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.tip, .warning {
+    padding: 1rem;
+    border-radius: 8px;
+    margin-top: 1rem;
+    border-left: 5px solid;
+}
+
+.tip {
+    background-color: #dbeafe; /* Blue light background */
+    border-color: #60a5fa; /* Blue border */
+    color: #1e40af; /* Blue text */
+}
+
+.warning {
+    background-color: #fef3c7; /* Yellow light background */
+    border-color: #fcd34d; /* Yellow border */
+    color: #b45309; /* Yellow text */
+}
+
+/* Tabs for caterflow.html */
+.tabs-container {
+    position: sticky;
+    top: 100px;
+    background-color: var(--bg-card);
+    box-shadow: var(--card-shadow);
+    z-index: 900;
+    margin-bottom: 2rem;
+    border-radius: 8px;
+}
+.tab-buttons {
+    display: flex;
+    overflow-x: auto;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border-color);
+    padding: 0 1rem;
+}
+.tab-button {
+    padding: 1rem;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-weight: bold;
+    color: var(--text-secondary);
+    position: relative;
+    transition: color 0.2s ease;
+}
+.tab-button.active {
+    color: var(--primary);
+}
+.tab-button.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background-color: var(--primary);
+}
+.tab-contents .tab-content {
+    display: none;
+    padding: 2rem;
+}
+.tab-contents .tab-content.active {
+    display: block;
+}
+
+/* Sanity-specific styles for sanity-doc.html */
+.filter-buttons {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+}
+
+.schema-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 2rem;
+}
+
+.schema-card {
+    padding: 1.5rem;
+}
+
+.schema-card h3 {
+    border-bottom: 2px solid var(--border-color);
+    padding-bottom: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.field-list {
+    list-style: none;
+    padding: 0;
+    margin-top: 1rem;
+}
+
+.field-list li {
+    background-color: var(--bg-primary);
+    padding: 0.5rem;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+    border: 1px solid var(--border-color);
+}

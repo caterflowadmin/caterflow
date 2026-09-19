@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How to Access Caterflow MongoDB Data</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/script.js" defer></script>
+</head>
+
+<body>
+    <header>
+        <div class="container">
+            <h1>How to Access Caterflow MongoDB Data</h1>
+            <p>A brief guide to viewing archived Caterflow data in MongoDB Atlas.</p>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="card">
+            <h2 class="card-title">Getting Started</h2>
+            <p>Caterflow keeps a MongoDB database for archived records (the Archive Run History feature).
+                You can view this data directly in MongoDB Atlas, the web dashboard that hosts the database,
+                without needing any technical setup.</p>
+
+            <div class="step-card">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <h3>Log in to MongoDB Atlas</h3>
+                    <p>Go to <a href="https://cloud.mongodb.com/" target="_blank">cloud.mongodb.com</a> and
+                        choose "Sign in with Google". Use the shared Caterflow Google account:</p>
+                    <p><strong>caterflowadmin@gmail.com</strong></p>
+                </div>
+            </div>
+
+            <div class="step-card">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <h3>Open the Data Explorer</h3>
+                    <p>Once logged in, use the link below to go straight to the Caterflow archive collections.
+                        This is where you can browse individual records, search, and filter data.</p>
+                    <a href="https://cloud.mongodb.com/v2/6aa68c1eddcfe308dbbc8200#/explorer/6aa68cc49f9053a84c19315b/caterflow_archive"
+                        target="_blank" class="card-button">Open Data Explorer ↗</a>
+                </div>
+            </div>
+
+            <div class="step-card">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <h3>Check cluster usage &amp; metrics</h3>
+                    <p>From the left-hand sidebar in Atlas, click <strong>Metrics</strong> (sometimes shown as
+                        the cluster name) to see storage used, connections, and read/write activity for the
+                        cluster. This is useful for keeping an eye on how much data has built up.</p>
+                </div>
+            </div>
+
+            <div class="warning">
+                <strong>Important:</strong> The Data Explorer lets you view and, if you have edit rights,
+                change records directly. Only edit or delete a document here if you are certain what it is —
+                there is no undo. If in doubt, view only, and contact G-Solutions² before making changes.
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Finding your way around Atlas</h2>
+            <p>MongoDB Atlas is organized around a few key areas, all reachable from the left-hand sidebar
+                once you're logged in and have selected the Caterflow project/cluster:</p>
+            <ul>
+                <li><strong>Database &gt; Browse Collections</strong> — same destination as the Data Explorer
+                    link above. Each "collection" is a folder of related records (for example, one collection
+                    per archived data type). Click a collection to see its documents; click a document to see
+                    its full contents.</li>
+                <li><strong>Database &gt; Metrics</strong> — cluster health and usage: storage size, number of
+                    connections, operations per second. Good for a quick "is everything healthy" check.</li>
+                <li><strong>Charts</strong> (if enabled) — lets you build simple visual dashboards from the
+                    data without writing any code, useful for reporting.</li>
+                <li><strong>Search bar at the top of a collection view</strong> — lets you filter documents
+                    using a simple query, e.g. <code>{"status": "completed"}</code> to find only completed
+                    records.</li>
+            </ul>
+
+            <div class="tip">
+                <p><strong>Reading a document:</strong> Each record ("document") is shown as a set of
+                    field/value pairs, similar to a JSON file. You don't need to understand every field —
+                    look for the ones with obvious names (like <code>date</code>, <code>status</code>,
+                    <code>siteId</code>) to find what you need.</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Cluster costs &amp; plans</h2>
+            <p>The Caterflow cluster currently runs on MongoDB Atlas. If usage grows (more storage, more
+                connections, or higher throughput than the current plan allows), Atlas will prompt an upgrade
+                to a paid tier. Pricing is set directly by MongoDB and is separate from any Caterflow
+                development fees — G-Solutions² does not mark this up.</p>
+            <a href="https://www.mongodb.com/pricing" target="_blank" class="card-button">
+                View MongoDB Pricing ↗
+            </a>
+            <div class="tip" style="margin-top:1rem;">
+                <p>If you're unsure whether an upgrade is needed or which tier fits your usage, check the
+                    Metrics page (step 3 above) first, or ask G-Solutions² for a recommendation.</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Getting Help</h2>
+            <p>If you need assistance accessing or reading the MongoDB data:</p>
+            <ul>
+                <li>Use this guide's links to get back to the right place in Atlas</li>
+                <li>Avoid editing or deleting documents unless you're confident about what they contain</li>
+                <li>Contact G-Solutions² for anything beyond viewing data</li>
+            </ul>
+
+            <div class="tip">
+                <p><strong>For technical support, you can also contact us directly:</strong></p>
+                <br>
+                <ul>
+                    <li>Email: <a href="mailto:synapsedigital.sz@gmail.com">synapsedigital.sz@gmail.com</a></li>
+                    <li>WhatsApp/Call: <a href="tel:+26879342380">+268 7934 2380</a></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>Caterflow by <a href="https://synapse-digital.vercel.app" target="_blank">Synapse</a> | Inventory Management
+            System</p>
+        <p>© 2023 Synapse. All rights reserved.</p>
+    </footer>
+</body>
+
+</html>

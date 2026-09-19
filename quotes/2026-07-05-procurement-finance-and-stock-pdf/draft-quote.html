@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Quotation — Procurement & Stock Count Adjustments</title>
+    <style>
+      body {
+        font-family:
+          Segoe UI,
+          Tahoma,
+          Geneva,
+          Verdana,
+          sans-serif;
+        background: #f5f5f5;
+        margin: 0;
+        padding: 14px;
+      }
+      .page {
+        width: 210mm;
+        min-height: 297mm;
+        margin: 0 auto;
+        background: #fff;
+        padding: 12mm;
+        box-shadow: 0 0 8px rgba(0, 0, 0, 0.08);
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 12px;
+      }
+      .logo {
+        width: 110px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0;
+      }
+      .meta {
+        font-size: 12px;
+        color: #333;
+      }
+      .section {
+        margin: 14px 0;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th,
+      td {
+        padding: 8px;
+        border: 1px solid #e1e1e1;
+        text-align: left;
+      }
+      th {
+        background: #fafafa;
+      }
+      .amount {
+        text-align: right;
+      }
+      .notes {
+        font-size: 12px;
+        background: #fbfbfb;
+        padding: 10px;
+        border-left: 4px solid #222;
+      }
+      .sig {
+        margin-top: 26px;
+        display: flex;
+        gap: 30px;
+      }
+      .sig div {
+        border-top: 1px solid #ccc;
+        width: 220px;
+        padding-top: 6px;
+        color: #666;
+        text-transform: uppercase;
+        font-size: 12px;
+      }
+      @media print {
+        body {
+          background: none;
+          padding: 0;
+        }
+        .page {
+          box-shadow: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <div>
+          <img src="gs.png" alt="G-Solutions²" class="logo" />
+        </div>
+        <div style="text-align: right">
+          <h1>Quotation</h1>
+          <div class="meta"><strong>To:</strong> CaterFlow</div>
+          <div class="meta"><strong>From:</strong> G-Solutions²</div>
+          <div class="meta"><strong>Date:</strong> July 5, 2026</div>
+          <div class="meta">
+            <strong>Quote Ref:</strong> CATERFLOW-ADJ-2026-07-05
+          </div>
+        </div>
+      </header>
+
+      <div class="section">
+        <p style="font-size: 13px; margin-bottom: 6px">
+          This quotation includes ONLY the two requested one-time adjustments.
+          It excludes subscriptions, monthly fees, and ongoing support.
+        </p>
+      </div>
+
+      <div class="section">
+        <table>
+          <thead>
+            <tr>
+              <th>Description</th>
+              <th style="width: 220px">Deliverables</th>
+              <th style="width: 140px">One-time Fee (SZL)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <strong>Procurement → Finance approval workflow</strong
+                ><br />Add 'Send to Finance' action after requisition summary
+                generation; create API route, approval record, and notification
+                hook for Finance review.
+              </td>
+              <td>
+                API route, UI button, approval workflow item, Finance email
+                trigger, role-based access, and validation.
+              </td>
+              <td class="amount">4,000</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Stock Count PDF export (including variances)</strong
+                ><br />Add Export-to-PDF on Stock Count page with all variance
+                rows, a printer-safe layout, and summary totals.
+              </td>
+              <td>
+                UI button, printable HTML/PDF content, variances table, custom
+                formatting, and cross-browser QA.
+              </td>
+              <td class="amount">2,500</td>
+            </tr>
+            <tr>
+              <th style="text-align: left">Subtotal</th>
+              <th></th>
+              <th class="amount">6,500</th>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <h2 style="margin: 0 0 8px 0">Scope of Work</h2>
+        <ul style="margin: 8px 0 0 18px; list-style: disc inside">
+          <li>
+            <strong>Procurement → Finance approval workflow</strong>: add the UI
+            button, connect it to requisition summary generation, implement a
+            protected API route, create a Finance approval record, add
+            role-based access, store audit details, trigger an EmailJS
+            notification template, and validate success/failure states.
+          </li>
+          <li>
+            <strong>Stock Count PDF export</strong>: add export controls,
+            capture count and variance data, build a printer-safe HTML/PDF
+            layout with headers/footers, include all variance rows and totals,
+            and test print preview and browser compatibility.
+          </li>
+        </ul>
+      </div>
+
+      <div class="section notes">
+        <strong>Notes</strong>
+        <ul style="margin: 8px 0 0 18px">
+          <li>
+            Implementation estimate: ~16–18 developer hours total, expected to
+            be completed within 3 weeks to 1 month due to after-hours and
+            weekend availability.
+          </li>
+          <li>
+            Client acceptance of this quotation authorises G-Solutions² to begin
+            work. A signed acceptance or written confirmation via email is
+            required.
+          </li>
+          <li>
+            This quote does not include any subscription, hosting, or Sanity
+            plan fees. Any additional feature requests will be quoted
+            separately.
+          </li>
+          <li>
+            If a server-generated PDF is required (instead of client-side
+            print), additional server work and infra may be necessary—quoted
+            separately.
+          </li>
+        </ul>
+      </div>
+
+      <div class="section">
+        <h2 style="margin: 0 0 8px 0">Email delivery (optional) — EmailJS</h2>
+        <p style="margin: 0 0 8px 0; font-size: 13px">
+          We recommend EmailJS for the Finance notification email so the client
+          can send email without exposing server-side credentials. EmailJS
+          pricing is separate; G-Solutions² will configure the integration, but
+          EmailJS charges are paid directly to EmailJS.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Plan (EmailJS)</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Free</td>
+              <td>
+                Starter tier — limited templates and send limits, useful for
+                proof-of-concept or low-volume notifications.
+              </td>
+            </tr>
+            <tr>
+              <td>Paid Plans</td>
+              <td>
+                Higher send limits, custom domain support, security features and
+                better production reliability. See EmailJS pricing page for
+                current rates.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p style="font-size: 12px; margin-top: 8px; color: #444">
+          If you prefer, we can set up EmailJS and provide a separate
+          recommendation for the right plan based on your expected volume.
+        </p>
+      </div>
+
+      <div class="sig">
+        <div>Client Signature</div>
+        <div>G-Solutions² Signature</div>
+      </div>
+
+      <div style="margin-top: 18px; font-size: 12px; color: #444">
+        <strong>Payment:</strong> One-time invoice will be issued on acceptance.
+        Payment via EFT to G-Solutions². Detailed payment instructions will be
+        included on the invoice.
+      </div>
+    </div>
+  </body>
+</html>

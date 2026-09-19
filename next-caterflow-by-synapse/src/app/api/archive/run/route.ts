@@ -45,7 +45,15 @@ async function pingArchiveDbWithRetry(): Promise<Awaited<ReturnType<typeof getAr
   throw pingErr;
 }
 
-export async function POST(request: Request) {
+// Vercel Cron invokes its scheduled path with an HTTP GET request (with
+// Authorization: Bearer $CRON_SECRET auto-attached), never POST — so the
+// real logic lives here, in a shared handler, and both exported methods
+// below just delegate to it. Previously this file's `GET` was a dead static
+// status stub while all the real cron/resume/fresh-sync logic lived only
+// under `POST`, meaning vercel.json's daily cron entry has been hitting the
+// stub and doing nothing since it was added — the admin UI's manual trigger
+// (always a POST) was the only thing that ever actually ran this.
+async function handleArchiveRunRequest(request: Request) {
   // ── Authentication: Accept either Vercel Cron secret OR admin session ──
 
   const headersList = await headers();
@@ -502,11 +510,16 @@ export async function POST(request: Request) {
   }
 }
 
-// Allow GET for quick health check
-export async function GET() {
-  return NextResponse.json({
-    status: "Archive endpoint ready",
-    schedule: "Daily at midnight (UTC)",
-    threshold: `${process.env.ARCHIVE_DAYS_THRESHOLD || 60} days`,
-  });
+// Vercel Cron calls this via GET — this is the real, currently-dead-in-
+// production entry point for the daily "resume if incomplete, else run a
+// fresh full sync" cron behavior. See the comment above
+// handleArchiveRunRequest for why this used to be a static stub.
+export async function GET(request: Request) {
+  return handleArchiveRunRequest(request);
+}
+
+// The admin UI's manual "Run Archive Now" / "Delete Old" buttons call this
+// via POST — unaffected by the GET fix above, same handler either way.
+export async function POST(request: Request) {
+  return handleArchiveRunRequest(request);
 }

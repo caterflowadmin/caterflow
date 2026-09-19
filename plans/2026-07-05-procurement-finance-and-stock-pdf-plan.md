@@ -2,9 +2,12 @@ Implementation guide — Procurement → Finance approval + Stock Count PDF expo
 
 Summary
 
-- Two one-time adjustments quoted in `gs.html`:
-  - Procurement → Finance approval workflow (SZL 5,000)
-  - Stock Count PDF export including all variances (SZL 3,000)
+- Two one-time adjustments quoted in `quotes/2026-07-05-procurement-finance-and-stock-pdf/sent-quote.html` (ref CATERFLOW-ADJ-2026-07-05):
+  - Procurement → Finance approval workflow (SZL 4,000)
+  - Stock Count PDF export including all variances (SZL 2,500)
+  - Subtotal: SZL 6,500
+
+Status: not started — checked the codebase on 2026-09-15; no `send-to-finance` route or handler exists yet under `next-caterflow-by-synapse/src/app/api/procurement/requisition-summary/`, and no `pdfExport` helper exists under `src/lib/`. Both features below are still to be built.
 
 Goals
 

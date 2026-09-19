@@ -296,8 +296,27 @@ export async function insertIfNotExists(
   docs: any[],
   errors: string[],
   progress?: (message: string | { skippedItem?: any }) => void,
-): Promise<{ inserted: number; updated: number; skipped: number }> {
-  if (!docs.length) return { inserted: 0, updated: 0, skipped: 0 };
+  // Only consulted inside the per-document fallback loop below (the bulk
+  // path is a single round trip and doesn't need it). Defaults to "never
+  // stop early" so existing callers that don't pass this (archiveUploadValidation.ts)
+  // keep their exact prior behavior of always running the whole batch.
+  checkTimeBudget: () => boolean = () => false,
+): Promise<{
+  inserted: number;
+  updated: number;
+  skipped: number;
+  // Sanity _id of the last document actually attempted (inserted, updated,
+  // skipped-as-unchanged, or genuinely failed-and-recorded) in this call.
+  // null only when zero documents were attempted at all.
+  lastProcessedSanityId: string | null;
+  // false only when the per-document fallback loop stopped early because
+  // checkTimeBudget() returned true — i.e. some of `docs` were never
+  // attempted. Callers must not advance any resume cursor past
+  // lastProcessedSanityId when this is false.
+  completedAll: boolean;
+}> {
+  if (!docs.length)
+    return { inserted: 0, updated: 0, skipped: 0, lastProcessedSanityId: null, completedAll: true };
 
   const collection = db.collection(collectionName);
   const payloads = docs
@@ -322,7 +341,14 @@ export async function insertIfNotExists(
     }
   }
 
-  if (!payloads.length) return { inserted: 0, updated: 0, skipped: skippedNoId };
+  if (!payloads.length)
+    return {
+      inserted: 0,
+      updated: 0,
+      skipped: skippedNoId,
+      lastProcessedSanityId: null,
+      completedAll: true,
+    };
 
   const sanityIds = payloads
     .map((payload) => payload._sanityId)
@@ -340,6 +366,12 @@ export async function insertIfNotExists(
   let inserted = 0;
   let updated = 0;
   let skipped = 0;
+  // Defaults assume the whole-batch bulk-write path (the common case, which
+  // always processes every payload) — only the per-document fallback loop
+  // below can leave completedAll false, when checkTimeBudget() cuts it off
+  // partway through.
+  let lastProcessedSanityId: string | null = null;
+  let completedAll = true;
 
   for (const payload of payloads) {
     const existing = existingById.get(payload._sanityId);
@@ -412,6 +444,7 @@ export async function insertIfNotExists(
         collection.bulkWrite(operations, { ordered: false }),
       );
       progressMessages.forEach((message) => progress?.(message));
+      lastProcessedSanityId = payloads[payloads.length - 1]._sanityId;
     } catch (err: any) {
       // Log full detail before falling back — a BulkWriteError carries a
       // per-operation `.writeErrors` array (each with its own index/errmsg)
@@ -446,30 +479,63 @@ export async function insertIfNotExists(
       inserted = 0;
       updated = 0;
       skipped = 0;
+      lastProcessedSanityId = null;
+      completedAll = true;
       let failedDocs = 0;
 
-      for (const doc of docs) {
+      for (let docIndex = 0; docIndex < docs.length; docIndex += 1) {
+        const doc = docs[docIndex];
+
+        // Checked BEFORE touching this document, not after — this is what
+        // guarantees lastProcessedSanityId never claims a document was
+        // handled when it wasn't. Without this, a slow/flaky MongoDB
+        // connection (production has shown MongoNetworkTimeoutError here)
+        // could let this loop run past the whole run's time budget with no
+        // checkpoint ever written, straight into Vercel's hard function
+        // timeout — the exact failure this check exists to prevent.
+        if (checkTimeBudget()) {
+          completedAll = false;
+          break;
+        }
+
         // Each document gets its OWN try/catch: a genuine (non-duplicate-key)
         // failure on one document must NOT abort the remaining documents in
         // this batch. Previously a single `throw err` here propagated out of
         // the whole `for` loop, so every document after the failing one was
         // silently never attempted — with only the one failing document's
         // error ever surfacing, and no indication anything else was skipped.
+        //
+        // Wrapped in an IIFE (continue -> return) purely so the single
+        // `lastProcessedSanityId = ...` line right after it runs
+        // unconditionally once this document has been attempted, regardless
+        // of which of the several success/skip/error paths below was taken —
+        // without having to duplicate that assignment before every one of
+        // them.
+        await (async () => {
         try {
           const payload = buildArchivedDocumentPayload(doc);
-          const existing = await collection.findOne({
-            _sanityId: payload._sanityId,
-          });
+          const existing = await withRetry(
+            () => collection.findOne({ _sanityId: payload._sanityId }),
+            DEFAULT_RETRY_ATTEMPTS,
+            DEFAULT_RETRY_DELAY_MS,
+            checkTimeBudget,
+          );
 
           if (!existing) {
             try {
-              await collection.insertOne({
-                ...payload,
-                _archivedAt: new Date().toISOString(),
-              });
+              await withRetry(
+                () =>
+                  collection.insertOne({
+                    ...payload,
+                    _archivedAt: new Date().toISOString(),
+                  }),
+                DEFAULT_RETRY_ATTEMPTS,
+                DEFAULT_RETRY_DELAY_MS,
+                checkTimeBudget,
+              );
               inserted += 1;
               progress?.(buildArchiveProgressMessage(payload, "inserted"));
-              continue;
+              return;
             } catch (insertErr: any) {
               if (
                 isDuplicateKeyError(insertErr) &&
@@ -480,7 +546,7 @@ export async function insertIfNotExists(
                 ))
               ) {
                 updated += 1;
-                continue;
+                return;
               }
               throw insertErr;
             }
@@ -518,18 +584,24 @@ export async function insertIfNotExists(
               // );
             }
             skipped += 1;
-            continue;
+            return;
           }
 
           try {
-            await collection.replaceOne(
-              { _sanityId: payload._sanityId },
-              {
-                ...payload,
-                _archivedAt: new Date().toISOString(),
-                _lastSyncedAt: new Date().toISOString(),
-              },
-              { upsert: true },
+            await withRetry(
+              () =>
+                collection.replaceOne(
+                  { _sanityId: payload._sanityId },
+                  {
+                    ...payload,
+                    _archivedAt: new Date().toISOString(),
+                    _lastSyncedAt: new Date().toISOString(),
+                  },
+                  { upsert: true },
+                ),
+              DEFAULT_RETRY_ATTEMPTS,
+              DEFAULT_RETRY_DELAY_MS,
+              checkTimeBudget,
             );
             updated += 1;
             progress?.(buildArchiveProgressMessage(payload, "updated"));
@@ -543,7 +615,7 @@ export async function insertIfNotExists(
               ))
             ) {
               updated += 1;
-              continue;
+              return;
             }
             throw replaceErr;
           }
@@ -563,6 +635,15 @@ export async function insertIfNotExists(
             `Failed to archive ${collectionName} document ${identifier}: ${docErr?.message || docErr}`,
           );
         }
+        })();
+
+        // Runs unconditionally once the IIFE above settles, regardless of
+        // which success/skip/error path inside it was taken — this document
+        // has now genuinely been attempted (its outcome is reflected in
+        // inserted/updated/skipped/errors above), so it's safe to resume
+        // strictly after it next time.
+        lastProcessedSanityId =
+          doc?._sanityId ?? doc?._id ?? lastProcessedSanityId;
       }
 
       if (failedDocs > 0) {
@@ -576,10 +657,13 @@ export async function insertIfNotExists(
       }
     }
   } else {
+    // No operations at all means every payload was skipped as unchanged in
+    // the dedupe loop above — still a fully-processed pass over `payloads`.
     progressMessages.forEach((message) => progress?.(message));
+    lastProcessedSanityId = payloads[payloads.length - 1]._sanityId;
   }
 
-  return { inserted, updated, skipped };
+  return { inserted, updated, skipped, lastProcessedSanityId, completedAll };
 }
 
 // ─── Sequence Counter Management ──────────────────────────────────────────────
@@ -797,23 +881,61 @@ async function archiveTypeBatched(options: {
     }));
 
     const errorsBefore = options.errors.length;
-    const { inserted, updated, skipped } = await insertIfNotExists(
-      options.db,
-      options.collectionName,
-      toInsert,
-      options.errors,
-      appendProgress,
-    );
+    const { inserted, updated, skipped, lastProcessedSanityId, completedAll } =
+      await insertIfNotExists(
+        options.db,
+        options.collectionName,
+        toInsert,
+        options.errors,
+        appendProgress,
+        // Reuses the same budget check as the between-batch one above, just
+        // with lastBatchDurationMs=0 so it reduces to "is there still at
+        // least MIN_BATCH_TIME_BUFFER_MS of headroom left" — the per-document
+        // fallback loop doesn't have a meaningful "last batch duration" of
+        // its own to estimate a bigger buffer from.
+        () => options.checkTimeBudget(0),
+      );
     // Mirror anything insertIfNotExists just pushed into the shared
     // run-level errors array so this step's own result reflects it too.
     stepErrors.push(...options.errors.slice(errorsBefore));
 
-    totalCount += batch.length;
     totalInserted += inserted;
     totalUpdated += updated;
     totalSkipped += skipped;
-    cursor = batch[batch.length - 1]._id;
     lastBatchDurationMs = Date.now() - batchStartedMs;
+
+    if (!completedAll) {
+      // The per-document fallback loop inside insertIfNotExists() hit its
+      // time budget partway through this page — some of `toInsert` were
+      // never attempted. Only advance the cursor to the last document that
+      // genuinely was processed (never to this page's last document), and
+      // count only those toward totalCount, so nothing gets silently
+      // skipped when this step resumes.
+      const processedIndex = lastProcessedSanityId
+        ? toInsert.findIndex((d: any) => d._sanityId === lastProcessedSanityId)
+        : -1;
+      totalCount += processedIndex + 1;
+      if (lastProcessedSanityId) cursor = lastProcessedSanityId;
+
+      return {
+        name: options.name,
+        count: totalCount,
+        deletedCount: 0,
+        status: "partial",
+        errors: stepErrors,
+        warnings: [],
+        assetsDeleted: 0,
+        inserted: totalInserted,
+        updated: totalUpdated,
+        skipped: totalSkipped,
+        message: `Paused mid-batch inside ${options.name} — per-document fallback hit its time budget after ${totalCount} document(s)`,
+        done: false,
+        resumeCursor: cursor,
+      };
+    }
+
+    totalCount += batch.length;
+    cursor = batch[batch.length - 1]._id;
 
     if (batch.length < batchSize) break; // last (partial) page — done
   }
@@ -1469,9 +1591,39 @@ export async function cleanupCollectionBatched(options: {
           `⚠️ Batched delete failed for ${options.collectionName}, falling back to per-document deletes:`,
           err?.message || err,
         );
-        for (const doc of deletable) {
+
+        let fallbackStoppedEarly = false;
+        let lastAttemptedDocId: string | null = null;
+
+        for (let i = 0; i < deletable.length; i += 1) {
+          const doc = deletable[i];
+
+          // Checked BEFORE attempting this document — same reasoning as the
+          // equivalent check in insertIfNotExists()'s fallback loop: under a
+          // slow/flaky MongoDB connection (the `updateOne` below is the most
+          // likely culprit — it's not wrapped in withRetry, unlike the
+          // Sanity delete just above it), this loop could otherwise run
+          // straight through the whole run's time budget with no checkpoint
+          // saved, into Vercel's hard timeout.
+          if (options.checkTimeBudget(0)) {
+            fallbackStoppedEarly = true;
+            break;
+          }
+          // Marked attempted regardless of outcome below — a genuine
+          // per-document failure still "counts" as processed for cursor
+          // purposes (matching the existing full-batch behavior at the end
+          // of this function, which always advances past a failed document
+          // rather than retrying it here); only a time-budget bailout above
+          // should stop the cursor short of this document.
+          lastAttemptedDocId = String(doc._id);
+
           try {
-            await withRetry(() => writeClient.delete(doc._sanityId));
+            await withRetry(
+              () => writeClient.delete(doc._sanityId),
+              DEFAULT_RETRY_ATTEMPTS,
+              DEFAULT_RETRY_DELAY_MS,
+              () => options.checkTimeBudget(0),
+            );
           } catch (docErr: any) {
             if (docErr?.statusCode !== 404) {
               console.error(
@@ -1486,12 +1638,26 @@ export async function cleanupCollectionBatched(options: {
           }
           deletedCount += 1;
           try {
-            await options.db
-              .collection(options.collectionName)
-              .updateOne(
-                { _sanityId: doc._sanityId },
-                { $set: { _sanityDeletedAt: new Date().toISOString() } },
-              );
+            // This write was previously NOT wrapped in withRetry at all — a
+            // single transient Mongo blip here meant a Sanity delete that
+            // genuinely succeeded still got recorded as an error (the
+            // Sept 18 incident's likely exact mechanism: many successful
+            // Sanity deletes, but their Mongo bookkeeping write failing en
+            // masse under a flaky connection, producing a run that looked
+            // "8/8 collections completed, hundreds of errors, 0 net
+            // deletions").
+            await withRetry(
+              () =>
+                options.db
+                  .collection(options.collectionName)
+                  .updateOne(
+                    { _sanityId: doc._sanityId },
+                    { $set: { _sanityDeletedAt: new Date().toISOString() } },
+                  ),
+              DEFAULT_RETRY_ATTEMPTS,
+              DEFAULT_RETRY_DELAY_MS,
+              () => options.checkTimeBudget(0),
+            );
           } catch (updateErr: any) {
             console.error(
               `❌ Deleted Sanity document ${doc._sanityId} but failed to mark it deleted in Mongo (${options.collectionName}):`,
@@ -1501,6 +1667,19 @@ export async function cleanupCollectionBatched(options: {
               `Deleted Sanity document ${doc._sanityId} (${options.collectionName}) but failed to record it in Mongo: ${updateErr?.message || updateErr}`,
             );
           }
+        }
+
+        if (fallbackStoppedEarly) {
+          // Bail out of the whole function now, before the unconditional
+          // cursor-advance-to-end-of-page below, which would otherwise
+          // silently skip every document in this page that the fallback
+          // loop never got to.
+          return {
+            deletedCount,
+            scanned,
+            done: false,
+            resumeCursor: lastAttemptedDocId ?? cursor,
+          };
         }
       }
     }
@@ -1812,6 +1991,25 @@ export async function resumeIncompleteCleanup(
 
     if (!incompleteRun) return { attempts, finished: true };
 
+    // With both the daily /api/archive/run cron and the frequent
+    // /api/archive/cron/resume cron able to call this function, two ticks
+    // landing close together could otherwise both find the same incomplete
+    // run and both call cleanupArchivedSanityData() on it at once, racing on
+    // the same "cleanup-progress" singleton doc. Skip if another invocation
+    // is already actively working through it (same staleness window used
+    // elsewhere for this exact singleton — see getCleanupProgress()).
+    const activeCleanupProgress = await db
+      .collection(COLLECTIONS.ARCHIVE_RUNS)
+      .findOne({ _id: "cleanup-progress" } as any);
+    if (activeCleanupProgress?.status === "running") {
+      const lastUpdatedTs = activeCleanupProgress.lastUpdatedAt
+        ? new Date(activeCleanupProgress.lastUpdatedAt).getTime()
+        : null;
+      const isStale =
+        !lastUpdatedTs || Date.now() - lastUpdatedTs > ARCHIVE_PROGRESS_STALE_MS;
+      if (!isStale) return { attempts, finished: false };
+    }
+
     // console.log(`🔁 Resuming incomplete cleanup run (found: ${incompleteRun.runId})`);
     attempts += 1;
     const res = await cleanupArchivedSanityData(incompleteRun.runId);
@@ -1890,18 +2088,32 @@ function isRetryableError(err: any): boolean {
   return statusCode === 429 || statusCode >= 500;
 }
 
+// `shouldStop` reuses the same time-budget predicate the caller's enclosing
+// loop already checks (e.g. the `checkTimeBudget` closures threaded through
+// insertIfNotExists()/cleanupCollectionBatched()'s fallback loops) to bound
+// how many NEW attempts withRetry can start — it does not (can't) bound an
+// already-in-flight attempt's own duration, which is what mongoClient.ts's
+// connectTimeoutMS/socketTimeoutMS are for. Without this, retrying an
+// operation that's failing because the whole run is nearly out of time just
+// reintroduces the same "ran past the time budget with no checkpoint saved"
+// failure one level down, inside what looks like a single retried call.
 async function withRetry<T>(
   fn: () => Promise<T>,
   attempts = DEFAULT_RETRY_ATTEMPTS,
   delayMs = DEFAULT_RETRY_DELAY_MS,
+  shouldStop?: () => boolean,
 ): Promise<T> {
   let lastError: any;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (shouldStop?.()) {
+      throw lastError ?? new Error("withRetry: time budget exhausted before first attempt");
+    }
     try {
       return await fn();
     } catch (err: any) {
       lastError = err;
       if (attempt >= attempts || !isRetryableError(err)) break;
+      if (shouldStop?.()) break; // don't sleep into a backoff we can't afford
       const backoff = delayMs * Math.pow(2, attempt - 1);
       await new Promise((resolve) => setTimeout(resolve, backoff));
     }
@@ -2756,6 +2968,25 @@ export async function resumeIncompleteArchives(
       .findOne({ incomplete: true }, { sort: { startedAt: -1 } });
 
     if (!incompleteRun) return { attempts, finished: true };
+
+    // With both the daily /api/archive/run cron and the frequent
+    // /api/archive/cron/resume cron able to call this function, two ticks
+    // landing close together could otherwise both find the same incomplete
+    // run and both call runArchive() on it at once, racing on the same
+    // "archive-progress" singleton doc. Skip if another invocation is
+    // already actively working through it (same staleness window used
+    // elsewhere for this singleton — see getArchiveProgress()).
+    const activeArchiveProgress = await db
+      .collection(COLLECTIONS.ARCHIVE_RUNS)
+      .findOne({ _id: "archive-progress" } as any);
+    if (activeArchiveProgress?.status === "running") {
+      const lastUpdatedTs = activeArchiveProgress.lastUpdatedAt
+        ? new Date(activeArchiveProgress.lastUpdatedAt).getTime()
+        : null;
+      const isStale =
+        !lastUpdatedTs || Date.now() - lastUpdatedTs > ARCHIVE_PROGRESS_STALE_MS;
+      if (!isStale) return { attempts, finished: false };
+    }
 
     // console.log(
     //   `🔁 Resuming incomplete archive run (found: ${incompleteRun.runId})`,

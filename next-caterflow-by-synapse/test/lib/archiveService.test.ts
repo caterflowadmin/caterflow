@@ -109,7 +109,13 @@ describe("insertIfNotExists", () => {
       errors,
     );
 
-    expect(result).toEqual({ inserted: 1, updated: 0, skipped: 0 });
+    expect(result).toEqual({
+      inserted: 1,
+      updated: 0,
+      skipped: 0,
+      lastProcessedSanityId: "doc-1",
+      completedAll: true,
+    });
     expect(bulkWrite).toHaveBeenCalledTimes(1);
     const ops = bulkWrite.mock.calls[0][0];
     expect(ops[0].insertOne.document._sanityId).toBe("doc-1");
@@ -134,7 +140,13 @@ describe("insertIfNotExists", () => {
       [],
     );
 
-    expect(result).toEqual({ inserted: 0, updated: 0, skipped: 1 });
+    expect(result).toEqual({
+      inserted: 0,
+      updated: 0,
+      skipped: 1,
+      lastProcessedSanityId: "doc-1",
+      completedAll: true,
+    });
     expect(bulkWrite).not.toHaveBeenCalled();
   });
 
@@ -155,7 +167,13 @@ describe("insertIfNotExists", () => {
       [],
     );
 
-    expect(result).toEqual({ inserted: 0, updated: 1, skipped: 0 });
+    expect(result).toEqual({
+      inserted: 0,
+      updated: 1,
+      skipped: 0,
+      lastProcessedSanityId: "doc-1",
+      completedAll: true,
+    });
     expect(bulkWrite).toHaveBeenCalledTimes(1);
     const ops = bulkWrite.mock.calls[0][0];
     expect(ops[0].replaceOne.filter).toEqual({ _sanityId: "doc-1" });
@@ -172,7 +190,13 @@ describe("insertIfNotExists", () => {
       [],
     );
 
-    expect(result).toEqual({ inserted: 0, updated: 0, skipped: 1 });
+    expect(result).toEqual({
+      inserted: 0,
+      updated: 0,
+      skipped: 1,
+      lastProcessedSanityId: null,
+      completedAll: true,
+    });
     expect(find).not.toHaveBeenCalled();
     expect(bulkWrite).not.toHaveBeenCalled();
   });
@@ -187,9 +211,65 @@ describe("insertIfNotExists", () => {
       [],
     );
 
-    expect(result).toEqual({ inserted: 0, updated: 0, skipped: 0 });
+    expect(result).toEqual({
+      inserted: 0,
+      updated: 0,
+      skipped: 0,
+      lastProcessedSanityId: null,
+      completedAll: true,
+    });
     expect(find).not.toHaveBeenCalled();
     expect(bulkWrite).not.toHaveBeenCalled();
+  });
+
+  // Regression test for the production incident this fix addresses: a
+  // batch whose bulk write fails (e.g. a duplicate-key collision) falls
+  // back to per-document writes, and under a slow/flaky MongoDB connection
+  // that per-document loop could previously run with no time-budget check
+  // at all — silently consuming the whole run's remaining time and running
+  // straight into Vercel's hard function timeout with zero checkpoint
+  // saved. This pins down that the loop now stops as soon as
+  // checkTimeBudget() says to, and reports exactly how far it actually got
+  // (not the whole batch) so a resume can pick up correctly.
+  it("stops the per-document fallback loop mid-batch once the time budget is exhausted, without claiming later documents were processed", async () => {
+    const bulkWrite = jest.fn().mockRejectedValue(new Error("duplicate key"));
+    const find = jest.fn().mockReturnValue({ toArray: jest.fn().mockResolvedValue([]) });
+    const findOne = jest.fn().mockResolvedValue(null);
+    const insertOne = jest.fn().mockResolvedValue({});
+    const collection = jest.fn().mockReturnValue({ find, bulkWrite, findOne, insertOne });
+    const db = { collection } as any;
+    const errors: string[] = [];
+
+    // Tied to whether the first document has actually finished inserting
+    // (rather than a raw call count, which would be fragile against exactly
+    // how many times checkTimeBudget happens to be consulted per document —
+    // it's now checked both at the top of each loop iteration and inside
+    // each retry-wrapped db operation). Budget is "exhausted" only once
+    // insertOne has resolved once, so the first document is guaranteed to
+    // complete and only the second document's iteration should ever see it
+    // return true.
+    const checkTimeBudget = () => insertOne.mock.calls.length > 0;
+
+    const result = await insertIfNotExists(
+      db,
+      "archived_dispatch_logs",
+      [
+        { _id: "doc-1", dispatchNumber: "D-1" },
+        { _id: "doc-2", dispatchNumber: "D-2" },
+        { _id: "doc-3", dispatchNumber: "D-3" },
+      ],
+      errors,
+      undefined,
+      checkTimeBudget,
+    );
+
+    expect(result.completedAll).toBe(false);
+    expect(result.lastProcessedSanityId).toBe("doc-1");
+    expect(result.inserted).toBe(1);
+    // Only the first document should ever have reached the db.
+    expect(findOne).toHaveBeenCalledTimes(1);
+    expect(insertOne).toHaveBeenCalledTimes(1);
+    expect(insertOne.mock.calls[0][0]._sanityId).toBe("doc-1");
   });
 });
 
@@ -378,6 +458,59 @@ describe("cleanupCollectionBatched", () => {
       { _sanityId: "sanity-1" },
       { $set: { _sanityDeletedAt: expect.any(String) } },
     );
+  });
+
+  // Regression test mirroring the equivalent one for insertIfNotExists:
+  // this per-document fallback loop (used when the batched Sanity
+  // transaction itself fails) previously had no time-budget check at all,
+  // so a slow/flaky connection to either Sanity or Mongo here could run
+  // straight through the whole run's time budget with no checkpoint saved.
+  // This is very plausibly the exact mechanism behind a real production
+  // incident where a cleanup run reported 8/8 collections "completed" with
+  // 462 errors and 0 net deletions.
+  it("stops the per-document delete fallback mid-batch once the time budget is exhausted, resuming from the last document actually attempted", async () => {
+    const toArray = jest
+      .fn()
+      .mockResolvedValueOnce([
+        { _id: "mongo-1", _sanityId: "sanity-1" },
+        { _id: "mongo-2", _sanityId: "sanity-2" },
+        { _id: "mongo-3", _sanityId: "sanity-3" },
+      ]);
+    const project = jest.fn().mockReturnValue({ toArray });
+    const limit = jest.fn().mockReturnValue({ project });
+    const sort = jest.fn().mockReturnValue({ limit });
+    const find = jest.fn().mockReturnValue({ sort });
+    const updateOne = jest.fn().mockResolvedValue({});
+    const db = { collection: jest.fn().mockReturnValue({ find, updateOne }) } as any;
+
+    const { transaction } = createMockTransaction();
+    transaction.commit.mockRejectedValue(new Error("transaction failed"));
+    (writeClient.transaction as jest.Mock).mockReturnValue(transaction);
+    (writeClient.delete as jest.Mock).mockResolvedValue({});
+
+    // Stop only once the first document's Mongo bookkeeping update has
+    // actually completed — decoupled from exact call counts, which shifted
+    // once withRetry started consulting this same predicate before each
+    // retry-wrapped operation, not just once per document.
+    const checkTimeBudget = () => updateOne.mock.calls.length > 0;
+
+    const result = await cleanupCollectionBatched({
+      db,
+      collectionName: "archived_file_attachments",
+      cutoffDate: "2026-01-01T00:00:00.000Z",
+      resumeCursor: null,
+      checkTimeBudget,
+      errors: [],
+      batchSize: 3,
+    });
+
+    expect(result.done).toBe(false);
+    expect(result.resumeCursor).toBe("mongo-1");
+    expect(result.deletedCount).toBe(1);
+    // Only the first document should ever have been attempted.
+    expect(writeClient.delete).toHaveBeenCalledTimes(1);
+    expect(writeClient.delete).toHaveBeenCalledWith("sanity-1");
+    expect(updateOne).toHaveBeenCalledTimes(1);
   });
 
   it("never calls Sanity delete or transaction for a candidate with no resolvable _sanityId", async () => {

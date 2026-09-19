@@ -3,6 +3,10 @@
         {
             "path": "/api/archive/run",
             "schedule": "0 0 * * *"
+        },
+        {
+            "path": "/api/archive/cron/resume",
+            "schedule": "*/5 * * * *"
         }
     ]
 }
