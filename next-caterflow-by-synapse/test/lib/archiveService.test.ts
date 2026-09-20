@@ -460,6 +460,71 @@ describe("cleanupCollectionBatched", () => {
     );
   });
 
+  // Regression test for the exact production incident this run reported:
+  // "FAILED, 462 errors, 0 deleted" — every one of those 462 was Sanity
+  // correctly refusing to delete a document still referenced by a *different*
+  // live document that hadn't individually crossed the delete cutoff yet
+  // (expected, since ARCHIVE_MIN_AGE_DAYS is decoupled from ARCHIVE_DAYS —
+  // see the comment above both constants). That's not a bug and must not be
+  // counted as one, or a run where literally nothing was old enough to
+  // delete yet gets misreported as a failure.
+  it("skips (not errors) a document Sanity refuses to delete because a live document still references it", async () => {
+    const toArray = jest
+      .fn()
+      .mockResolvedValueOnce([
+        { _id: "mongo-1", _sanityId: "sanity-1" },
+        { _id: "mongo-2", _sanityId: "sanity-2" },
+      ])
+      .mockResolvedValueOnce([]);
+    const project = jest.fn().mockReturnValue({ toArray });
+    const limit = jest.fn().mockReturnValue({ project });
+    const sort = jest.fn().mockReturnValue({ limit });
+    const find = jest.fn().mockReturnValue({ sort });
+    const updateOne = jest.fn().mockResolvedValue({});
+    const db = { collection: jest.fn().mockReturnValue({ find, updateOne }) } as any;
+
+    const { transaction } = createMockTransaction();
+    transaction.commit.mockRejectedValue(new Error("transaction failed"));
+    (writeClient.transaction as jest.Mock).mockReturnValue(transaction);
+
+    const referencedError = Object.assign(
+      new Error(
+        'Mutation failed: Document "sanity-1" cannot be deleted as there are references to it from "some-other-doc"',
+      ),
+      {
+        statusCode: 409,
+        details: {
+          type: "mutationError",
+          items: [{ error: { type: "documentHasExistingReferencesError" } }],
+        },
+      },
+    );
+    (writeClient.delete as jest.Mock)
+      .mockRejectedValueOnce(referencedError)
+      .mockResolvedValueOnce({});
+
+    const errors: string[] = [];
+    const result = await cleanupCollectionBatched({
+      db,
+      collectionName: "archived_purchase_orders",
+      cutoffDate: "2026-01-01T00:00:00.000Z",
+      resumeCursor: null,
+      checkTimeBudget: () => false,
+      errors,
+      batchSize: 2,
+    });
+
+    // sanity-1 was blocked by a live reference and must be silently skipped:
+    // not an error, and not counted as deleted.
+    expect(errors).toEqual([]);
+    expect(result.deletedCount).toBe(1);
+    expect(updateOne).toHaveBeenCalledTimes(1);
+    expect(updateOne).toHaveBeenCalledWith(
+      { _sanityId: "sanity-2" },
+      { $set: { _sanityDeletedAt: expect.any(String) } },
+    );
+  });
+
   // Regression test mirroring the equivalent one for insertIfNotExists:
   // this per-document fallback loop (used when the batched Sanity
   // transaction itself fails) previously had no time-budget check at all,

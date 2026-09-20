@@ -1504,6 +1504,42 @@ const DELETE_SAFE_STATUS: Partial<
   [COLLECTIONS.INVENTORY_COUNTS]: { field: "status", safeValues: ["completed", "adjusted"] },
 };
 
+// Detects Sanity's "documentHasExistingReferencesError" (409) — a document
+// that's individually past the delete cutoff but still referenced by a
+// *different* live document that hasn't crossed its own cutoff yet. This is
+// expected steady-state behavior, not a bug: ARCHIVE_MIN_AGE_DAYS (when a
+// document is archived to Mongo) is deliberately decoupled from ARCHIVE_DAYS
+// (when it becomes eligible for permanent deletion — see both constants
+// above), and each document type uses its own business date field, so a
+// PurchaseOrder and the GoodsReceipt that references it routinely cross the
+// delete cutoff at different times. Reordering CLEANUP_COLLECTIONS_TO_PROCESS
+// (see the comment above it) only helps when the referencing document is
+// ALSO eligible for deletion in the same run — it does nothing when the
+// referencing document simply isn't old enough yet. Confirmed against
+// production logs on 2026-09-20: a cleanup run where every single failure
+// was this error still reported "FAILED, 462 errors, 0 deleted" — counting
+// these as hard errors misrepresents an entirely normal run where nothing
+// happened to be old enough to delete yet.
+function isBlockedByExistingReferences(err: any): boolean {
+  if (err?.statusCode !== 409) return false;
+  const type = err?.details?.type ?? err?.response?.body?.error?.type;
+  if (type === "documentHasExistingReferencesError") return true;
+  const items = err?.details?.items ?? err?.response?.body?.error?.items;
+  if (
+    Array.isArray(items) &&
+    items.some(
+      (item: any) => item?.error?.type === "documentHasExistingReferencesError",
+    )
+  ) {
+    return true;
+  }
+  const message = String(err?.message || "");
+  return (
+    message.includes("documentHasExistingReferencesError") ||
+    message.includes("cannot be deleted as there are references to it from")
+  );
+}
+
 export async function cleanupCollectionBatched(options: {
   db: Db;
   collectionName: string;
@@ -1661,6 +1697,12 @@ export async function cleanupCollectionBatched(options: {
             );
           } catch (docErr: any) {
             if (docErr?.statusCode !== 404) {
+              if (isBlockedByExistingReferences(docErr)) {
+                console.warn(
+                  `⏭️ Skipping ${doc._sanityId} (${options.collectionName}): still referenced by a live document, will retry once that document is also past its own delete cutoff`,
+                );
+                continue;
+              }
               console.error(
                 `❌ Failed to delete Sanity document ${doc._sanityId} from ${options.collectionName}:`,
                 docErr,
