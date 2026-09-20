@@ -420,6 +420,91 @@ describe("cleanupCollectionBatched", () => {
     );
   });
 
+  // Regression test: deleteSanityAsset existed in this file but was never
+  // actually called anywhere — confirmed against production Mongo data on
+  // 2026-09-20, where every one of 3,671 already-deleted FileAttachment
+  // documents still had its underlying 1-4MB image/PDF asset sitting
+  // orphaned in Sanity (Assets Deleted: 0 on every run, ever). A
+  // FileAttachment document and its asset are now deleted together, in the
+  // same transaction, whenever the doc carries a file.asset._id.
+  it("deletes a FileAttachment's underlying asset alongside its document, in the same transaction", async () => {
+    const toArray = jest
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          _id: "mongo-1",
+          _sanityId: "sanity-1",
+          file: { asset: { _id: "file-asset-1" } },
+        },
+        // No asset on this one — e.g. a legacy record — must not throw or
+        // attempt to delete anything for it.
+        { _id: "mongo-2", _sanityId: "sanity-2" },
+      ])
+      .mockResolvedValueOnce([]);
+    const project = jest.fn().mockReturnValue({ toArray });
+    const limit = jest.fn().mockReturnValue({ project });
+    const sort = jest.fn().mockReturnValue({ limit });
+    const find = jest.fn().mockReturnValue({ sort });
+    const updateMany = jest.fn().mockResolvedValue({});
+    const db = { collection: jest.fn().mockReturnValue({ find, updateMany }) } as any;
+
+    const { transaction, deleted } = createMockTransaction();
+    (writeClient.transaction as jest.Mock).mockReturnValue(transaction);
+
+    const result = await cleanupCollectionBatched({
+      db,
+      collectionName: "archived_file_attachments",
+      cutoffDate: "2026-01-01T00:00:00.000Z",
+      resumeCursor: null,
+      checkTimeBudget: () => false,
+      errors: [],
+      batchSize: 2,
+    });
+
+    expect(deleted).toEqual(["sanity-1", "file-asset-1", "sanity-2"]);
+    expect(result.deletedCount).toBe(2);
+    expect(result.assetsDeleted).toBe(1);
+  });
+
+  it("deletes a FileAttachment's underlying asset via a separate call when falling back to per-document deletes", async () => {
+    const toArray = jest
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          _id: "mongo-1",
+          _sanityId: "sanity-1",
+          file: { asset: { _id: "file-asset-1" } },
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    const project = jest.fn().mockReturnValue({ toArray });
+    const limit = jest.fn().mockReturnValue({ project });
+    const sort = jest.fn().mockReturnValue({ limit });
+    const find = jest.fn().mockReturnValue({ sort });
+    const updateOne = jest.fn().mockResolvedValue({});
+    const db = { collection: jest.fn().mockReturnValue({ find, updateOne }) } as any;
+
+    const { transaction } = createMockTransaction();
+    transaction.commit.mockRejectedValue(new Error("transaction failed"));
+    (writeClient.transaction as jest.Mock).mockReturnValue(transaction);
+    (writeClient.delete as jest.Mock).mockResolvedValue({});
+
+    const result = await cleanupCollectionBatched({
+      db,
+      collectionName: "archived_file_attachments",
+      cutoffDate: "2026-01-01T00:00:00.000Z",
+      resumeCursor: null,
+      checkTimeBudget: () => false,
+      errors: [],
+      batchSize: 2,
+    });
+
+    expect(writeClient.delete).toHaveBeenCalledWith("sanity-1");
+    expect(writeClient.delete).toHaveBeenCalledWith("file-asset-1");
+    expect(result.deletedCount).toBe(1);
+    expect(result.assetsDeleted).toBe(1);
+  });
+
   it("falls back to per-document deletes for a page if the batched transaction itself fails", async () => {
     const toArray = jest
       .fn()

@@ -1427,6 +1427,10 @@ export interface CleanupRunResult {
   completedAt: string;
   durationMs: number;
   deletedSanityDocuments: number;
+  // FileAttachment's underlying asset (the actual image/PDF blob), deleted
+  // alongside its document — see getFileAssetId/deleteSanityAsset. Zero for
+  // every other collection, since only FileAttachment carries a `file.asset`.
+  assetsDeleted: number;
   scanned: number;
   collectionsProcessed: number;
   totalCollections: number;
@@ -1540,6 +1544,18 @@ function isBlockedByExistingReferences(err: any): boolean {
   );
 }
 
+// FileAttachment's `file.asset` reference points at the actual Sanity asset
+// document (the binary blob — an image or PDF, commonly 1-4MB each per
+// production data checked directly against Mongo on 2026-09-20). Deleting
+// the FileAttachment document alone does NOT delete that asset — it becomes
+// orphaned, still fully counted against Sanity's storage. deleteSanityAsset()
+// existed in this file but was never actually called anywhere, which is why
+// "Assets Deleted" was 0 on every single archive/cleanup run ever recorded,
+// even after thousands of FileAttachment documents had been cleaned up.
+function getFileAssetId(doc: any): string | null {
+  return doc?.file?.asset?._id || null;
+}
+
 export async function cleanupCollectionBatched(options: {
   db: Db;
   collectionName: string;
@@ -1550,6 +1566,7 @@ export async function cleanupCollectionBatched(options: {
   batchSize?: number;
 }): Promise<{
   deletedCount: number;
+  assetsDeleted: number;
   scanned: number;
   done: boolean;
   resumeCursor: string | null;
@@ -1557,12 +1574,13 @@ export async function cleanupCollectionBatched(options: {
   const batchSize = options.batchSize || DEFAULT_CLEANUP_BATCH_SIZE;
   let cursor = options.resumeCursor || null;
   let deletedCount = 0;
+  let assetsDeleted = 0;
   let scanned = 0;
   let lastBatchDurationMs = 0;
 
   while (true) {
     if (options.checkTimeBudget(lastBatchDurationMs)) {
-      return { deletedCount, scanned, done: false, resumeCursor: cursor };
+      return { deletedCount, assetsDeleted, scanned, done: false, resumeCursor: cursor };
     }
 
     const batchStartedMs = Date.now();
@@ -1612,7 +1630,10 @@ export async function cleanupCollectionBatched(options: {
         .find(query)
         .sort({ _id: 1 })
         .limit(batchSize)
-        .project({ _sanityId: 1 })
+        // "file.asset._id" is only ever populated on archived_file_attachments
+        // docs (see the projection in archiveFileAttachments) — harmless no-op
+        // for every other collection, which simply won't have a `file` field.
+        .project({ _sanityId: 1, "file.asset._id": 1 })
         .toArray();
     } catch (err: any) {
       options.errors.push(
@@ -1622,7 +1643,7 @@ export async function cleanupCollectionBatched(options: {
       // spin, but report it as "done" with whatever cursor we already had
       // so the overall cleanup run moves on to the next collection instead
       // of getting stuck retrying a broken query forever.
-      return { deletedCount, scanned, done: true, resumeCursor: cursor };
+      return { deletedCount, assetsDeleted, scanned, done: true, resumeCursor: cursor };
     }
 
     if (!batch.length) break; // no more candidates — this collection is done
@@ -1644,9 +1665,14 @@ export async function cleanupCollectionBatched(options: {
         const transaction = writeClient.transaction();
         for (const doc of deletable) {
           transaction.delete(doc._sanityId);
+          // Delete the document and its underlying asset in the SAME
+          // transaction — atomic, and avoids a separate round-trip per file.
+          const assetId = getFileAssetId(doc);
+          if (assetId) transaction.delete(assetId);
         }
         await withRetry(() => transaction.commit());
         deletedCount += deletable.length;
+        assetsDeleted += deletable.filter((doc) => Boolean(getFileAssetId(doc))).length;
 
         await options.db.collection(options.collectionName).updateMany(
           { _sanityId: { $in: deletable.map((doc) => doc._sanityId) } },
@@ -1714,6 +1740,16 @@ export async function cleanupCollectionBatched(options: {
             }
           }
           deletedCount += 1;
+          const assetId = getFileAssetId(doc);
+          if (assetId) {
+            // Best-effort: the document is already confirmed gone from
+            // Sanity above, so a failure here (already logged inside
+            // deleteSanityAsset, 404s treated as success) shouldn't block
+            // or retry the document delete itself — it'll just leave one
+            // orphaned asset instead of the whole page failing.
+            await deleteSanityAsset(assetId);
+            assetsDeleted += 1;
+          }
           try {
             // This write was previously NOT wrapped in withRetry at all — a
             // single transient Mongo blip here meant a Sanity delete that
@@ -1753,6 +1789,7 @@ export async function cleanupCollectionBatched(options: {
           // loop never got to.
           return {
             deletedCount,
+            assetsDeleted,
             scanned,
             done: false,
             resumeCursor: lastAttemptedDocId ?? cursor,
@@ -1772,7 +1809,7 @@ export async function cleanupCollectionBatched(options: {
     if (batch.length < batchSize) break; // last (partial) page — done
   }
 
-  return { deletedCount, scanned, done: true, resumeCursor: cursor };
+  return { deletedCount, assetsDeleted, scanned, done: true, resumeCursor: cursor };
 }
 
 export async function cleanupArchivedSanityData(
@@ -1805,6 +1842,7 @@ export async function cleanupArchivedSanityData(
 
   const errors: string[] = [];
   let deletedSanityDocuments = 0;
+  let assetsDeleted = 0;
   let scanned = 0;
 
   await progressCollection.updateOne(
@@ -1846,6 +1884,7 @@ export async function cleanupArchivedSanityData(
         startMs,
         cutoff,
         deletedSanityDocuments,
+        assetsDeleted,
         scanned,
         errors,
         completedCollections,
@@ -1873,6 +1912,7 @@ export async function cleanupArchivedSanityData(
     });
 
     deletedSanityDocuments += result.deletedCount;
+    assetsDeleted += result.assetsDeleted;
     scanned += result.scanned;
 
     if (!result.done) {
@@ -1885,6 +1925,7 @@ export async function cleanupArchivedSanityData(
         startMs,
         cutoff,
         deletedSanityDocuments,
+        assetsDeleted,
         scanned,
         errors,
         completedCollections,
@@ -1914,6 +1955,7 @@ export async function cleanupArchivedSanityData(
     completedAt,
     durationMs: Date.now() - startMs,
     deletedSanityDocuments,
+    assetsDeleted,
     scanned,
     collectionsProcessed: completedCollections.size,
     totalCollections: CLEANUP_COLLECTIONS_TO_PROCESS.length,
@@ -1957,6 +1999,7 @@ async function writeIncompleteCleanupPartial(options: {
   startMs: number;
   cutoff: string;
   deletedSanityDocuments: number;
+  assetsDeleted: number;
   scanned: number;
   errors: string[];
   completedCollections: Set<string>;
@@ -1969,6 +2012,7 @@ async function writeIncompleteCleanupPartial(options: {
     completedAt: new Date().toISOString(),
     durationMs: Date.now() - options.startMs,
     deletedSanityDocuments: options.deletedSanityDocuments,
+    assetsDeleted: options.assetsDeleted,
     scanned: options.scanned,
     collectionsProcessed: options.completedCollections.size,
     totalCollections: CLEANUP_COLLECTIONS_TO_PROCESS.length,
