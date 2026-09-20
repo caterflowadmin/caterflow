@@ -1454,11 +1454,20 @@ export interface CleanupRunResult {
 // references to it from <snapshot id>" — confirmed against production logs
 // on 2026-09-20. Deleting StockSnapshot first releases those references
 // before the referenced collections are attempted.
+//
+// Two more live (non-stale) reference fields cause the same failure mode
+// unless ordered correctly — confirmed against production logs on
+// 2026-09-20: fileAttachment.relatedTo is a required polymorphic reference
+// to PurchaseOrder/GoodsReceipt/DispatchLog/InternalTransfer/InventoryCount,
+// so FILE_ATTACHMENTS must be processed before all five; and
+// goodsReceipt.purchaseOrder references PurchaseOrder, so GOODS_RECEIPTS
+// must be processed before PURCHASE_ORDERS.
 const CLEANUP_COLLECTIONS_TO_PROCESS = [
   { collectionName: COLLECTIONS.STOCK_SNAPSHOTS, sanityType: "stockSnapshot" },
+  { collectionName: COLLECTIONS.FILE_ATTACHMENTS, sanityType: "FileAttachment" },
+  { collectionName: COLLECTIONS.GOODS_RECEIPTS, sanityType: "GoodsReceipt" },
   { collectionName: COLLECTIONS.DISPATCH_LOGS, sanityType: "DispatchLog" },
   { collectionName: COLLECTIONS.PURCHASE_ORDERS, sanityType: "PurchaseOrder" },
-  { collectionName: COLLECTIONS.GOODS_RECEIPTS, sanityType: "GoodsReceipt" },
   {
     collectionName: COLLECTIONS.INTERNAL_TRANSFERS,
     sanityType: "InternalTransfer",
@@ -1471,7 +1480,6 @@ const CLEANUP_COLLECTIONS_TO_PROCESS = [
     collectionName: COLLECTIONS.INVENTORY_COUNTS,
     sanityType: "InventoryCount",
   },
-  { collectionName: COLLECTIONS.FILE_ATTACHMENTS, sanityType: "FileAttachment" },
 ];
 
 // Safety gate for permanent Sanity deletion: a document is only eligible
