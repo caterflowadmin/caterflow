@@ -1440,7 +1440,22 @@ export interface CleanupRunResult {
   collectionCursors: Record<string, string | null>;
 }
 
+// StockSnapshot MUST be processed first. Its `lastTransaction` field (see
+// studio-caterflow-by-synapse/schemaTypes/stockSnapshot.ts) is a strong
+// reference to DispatchLog/GoodsReceipt/InternalTransfer/InventoryCount —
+// a leftover from an older write path that no longer runs (current code in
+// stockCalculations.ts only ever sets lastTransactionId/lastTransactionType,
+// plain strings, never lastTransaction), but old StockSnapshot documents
+// still carry it, since Sanity patches only set the keys given and never
+// clear ones left out. Sanity refuses to delete any document that still has
+// an inbound strong reference, so deleting DispatchLog/GoodsReceipt/
+// InternalTransfer/InventoryCount before the stale StockSnapshot rows that
+// point at them always failed with "cannot be deleted as there are
+// references to it from <snapshot id>" — confirmed against production logs
+// on 2026-09-20. Deleting StockSnapshot first releases those references
+// before the referenced collections are attempted.
 const CLEANUP_COLLECTIONS_TO_PROCESS = [
+  { collectionName: COLLECTIONS.STOCK_SNAPSHOTS, sanityType: "stockSnapshot" },
   { collectionName: COLLECTIONS.DISPATCH_LOGS, sanityType: "DispatchLog" },
   { collectionName: COLLECTIONS.PURCHASE_ORDERS, sanityType: "PurchaseOrder" },
   { collectionName: COLLECTIONS.GOODS_RECEIPTS, sanityType: "GoodsReceipt" },
@@ -1457,7 +1472,6 @@ const CLEANUP_COLLECTIONS_TO_PROCESS = [
     sanityType: "InventoryCount",
   },
   { collectionName: COLLECTIONS.FILE_ATTACHMENTS, sanityType: "FileAttachment" },
-  { collectionName: COLLECTIONS.STOCK_SNAPSHOTS, sanityType: "stockSnapshot" },
 ];
 
 // Safety gate for permanent Sanity deletion: a document is only eligible
