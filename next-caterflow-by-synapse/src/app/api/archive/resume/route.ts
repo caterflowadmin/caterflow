@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     // racing on the same progress doc. That's exactly what produced bursts
     // of "Starting archive run: <same runId>" a few seconds apart in the
     // logs. Also: resumeIncompleteArchives() calls runArchive() inline,
-    // which is itself allowed to run close to the full ~270s budget on its
+    // which is itself allowed to run close to the full ~240s budget on its
     // first attempt — awaiting that here blocked the HTTP response for that
     // long, the same issue already fixed in /api/archive/run.
     const db = await getArchiveDb();

@@ -116,7 +116,7 @@ async function handleArchiveRunRequest(request: Request) {
       //
       // IMPORTANT: resumeIncompleteCleanup() calls cleanupArchivedSanityData()
       // directly, which is itself allowed to run close to the full
-      // ARCHIVE_MAX_SECONDS (~270s) budget per attempt. For a large backlog
+      // ARCHIVE_MAX_SECONDS (~240s) budget per attempt. For a large backlog
       // that routinely needs resuming, `await`ing that here — inline in the
       // request handler, for a *manual* (browser-facing) trigger — blocks
       // the HTTP response for that entire duration, which either looks like
@@ -238,11 +238,11 @@ async function handleArchiveRunRequest(request: Request) {
       // IMPORTANT: this used to `await resumeIncompleteArchives(5)` directly
       // here. resumeIncompleteArchives() calls runArchive() inline, and
       // runArchive() is itself allowed to run close to the full
-      // ARCHIVE_MAX_SECONDS (~270s) budget on its first attempt (the outer
+      // ARCHIVE_MAX_SECONDS (~240s) budget on its first attempt (the outer
       // time-budget guard inside resumeIncompleteArchives only kicks in
       // *between* attempts, not before the first one). Awaiting that here —
       // in a manual, browser-facing request handler — blocked the HTTP
-      // response for up to ~270s every time an admin clicked "Run Archive
+      // response for up to ~240s every time an admin clicked "Run Archive
       // Now" while an incomplete run existed, and any batch running long
       // pushed it past Vercel's 300s maxDuration for a hard-killed 504 with
       // no response ever sent. For the large backlogs this batching system

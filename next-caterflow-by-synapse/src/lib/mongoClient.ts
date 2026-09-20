@@ -58,11 +58,20 @@ if (uri) {
         if (!global._mongoClientPromise) {
             client = new MongoClient(uri, mongoOptions);
             global._mongoClientPromise = client.connect();
+            // A connect() failure before anything awaits this promise (e.g. a
+            // cold start hitting a struggling Atlas cluster) is otherwise an
+            // unhandled rejection, which crashes the whole process rather
+            // than just failing the one request. This no-op catch marks the
+            // promise as handled without swallowing the error for real
+            // consumers — getArchiveDb() still awaits clientPromise and
+            // throws normally.
+            global._mongoClientPromise.catch(() => { });
         }
         clientPromise = global._mongoClientPromise!;
     } else {
         client = new MongoClient(uri, mongoOptions);
         clientPromise = client.connect();
+        clientPromise.catch(() => { });
     }
 }
 

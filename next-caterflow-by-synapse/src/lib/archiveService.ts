@@ -782,7 +782,20 @@ const DEFAULT_ARCHIVE_BATCH_SIZE = parseInt(
 // with the adaptive check below (based on how long the last batch actually
 // took), this keeps every batch comfortably inside the remaining budget
 // instead of relying on a single fixed guess.
-const MIN_BATCH_TIME_BUFFER_MS = 8000;
+//
+// Sized against worst case, not typical case: a single withRetry()-wrapped
+// Mongo/Sanity call here can legitimately take up to ~60s once you account
+// for the free-tier M0 Atlas cluster's own timeouts (serverSelectionTimeoutMS
+// 8s + socketTimeoutMS 12s ≈ 20s per attempt) times DEFAULT_RETRY_ATTEMPTS
+// (3) plus backoff sleeps — and production has observed single Mongo
+// secureConnect stalls up to 75s on this cluster, well past what the driver's
+// own timeouts nominally promise. An 8000ms buffer measured this directly: a
+// real local run against this cluster (2026-09-20) finished at 297.7s wall
+// time against a 270s soft budget — a ~28s overshoot that ate nearly all of
+// the 30s margin under Vercel's 300s hard maxDuration. Raised to 45000 so a
+// batch/document is only started when there's enough headroom left to absorb
+// something close to that worst case without blowing past the hard limit.
+const MIN_BATCH_TIME_BUFFER_MS = 45000;
 
 interface BatchedStepResult extends ArchiveStepResult {
   done: boolean;
@@ -1563,7 +1576,7 @@ export async function cleanupCollectionBatched(options: {
       // Delete the whole page in ONE Sanity mutation transaction instead of
       // one HTTP round-trip per document. The one-at-a-time version above
       // (kept below as a fallback) is what made a multi-thousand-document
-      // backlog take hours — roughly one ~100-doc batch per ~270s
+      // backlog take hours — roughly one ~100-doc batch per ~240s
       // invocation, almost entirely spent on sequential network latency.
       // Sanity's mutate API accepts up to 1000 mutations per transaction
       // (same limit already relied on in stock/clear-snapshots/route.ts)
@@ -1706,7 +1719,7 @@ export async function cleanupArchivedSanityData(
   const runId = providedRunId || `cleanup-${Date.now()}`;
   const startedAt = new Date().toISOString();
   const startMs = Date.now();
-  const maxSeconds = parseInt(process.env.ARCHIVE_MAX_SECONDS || "270", 10);
+  const maxSeconds = parseInt(process.env.ARCHIVE_MAX_SECONDS || "240", 10);
   const allowedMs = maxSeconds * 1000;
   const progressId = "cleanup-progress";
   const progressCollection = db.collection(COLLECTIONS.ARCHIVE_RUNS);
@@ -1973,7 +1986,7 @@ export async function resumeIncompleteCleanup(
   // exceed Vercel's hard timeout.
   const outerStartMs = Date.now();
   const outerBudgetMs =
-    parseInt(process.env.ARCHIVE_MAX_SECONDS || "270", 10) * 1000;
+    parseInt(process.env.ARCHIVE_MAX_SECONDS || "240", 10) * 1000;
 
   while (attempts < maxAttempts) {
     if (
@@ -2556,7 +2569,7 @@ export async function runArchive(
     });
 
     const cutoff = getArchiveCutoffDate();
-    const maxSeconds = parseInt(process.env.ARCHIVE_MAX_SECONDS || "270", 10);
+    const maxSeconds = parseInt(process.env.ARCHIVE_MAX_SECONDS || "240", 10);
     const allowedMs = maxSeconds * 1000;
     startMs = Date.now();
 
@@ -2946,14 +2959,14 @@ export async function resumeIncompleteArchives(
   // checkpointing). Looping up to maxAttempts times here WITHOUT a matching
   // outer time check would just reproduce the exact same "silently killed
   // by Vercel's hard timeout" failure one level up, the moment a backlog
-  // needs more than one resume cycle to finish — up to 5 x ~270s is nearly
+  // needs more than one resume cycle to finish — up to 5 x ~240s is nearly
   // 23 minutes against a 300-second hard limit. Only attempt another
   // iteration if there's still comfortable headroom left in THIS
   // invocation; otherwise stop cleanly (nothing lost — runArchive() has
   // already checkpointed) and let the next cron tick continue.
   const outerStartMs = Date.now();
   const outerBudgetMs =
-    parseInt(process.env.ARCHIVE_MAX_SECONDS || "270", 10) * 1000;
+    parseInt(process.env.ARCHIVE_MAX_SECONDS || "240", 10) * 1000;
 
   for (; attempts < maxAttempts; attempts += 1) {
     if (
