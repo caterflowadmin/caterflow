@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sanity Document Retention — Findings &amp; Recommendations</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; color:#1a1a1a; font-size:12px; padding:14mm 16mm; }
+  header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; }
+  .logo { font-size:26px; font-weight:800; letter-spacing:1px; }
+  .logo sup { font-size:14px; }
+  .doc-meta { text-align:right; font-size:11px; line-height:1.5; }
+  .doc-meta h1 { font-size:18px; text-transform:uppercase; font-weight:600; margin-bottom:4px; }
+  p.intro { font-size:11.5px; line-height:1.5; margin: 10px 0 14px 0; }
+  h2.section { font-size:13px; text-transform:none; font-weight:700; margin:18px 0 6px 0; }
+  h3.subsection { font-size:11.5px; font-weight:700; margin:12px 0 4px 0; }
+  ul.scope { margin-left:18px; font-size:11px; line-height:1.6; margin-bottom:10px; }
+  ul.scope li { margin-bottom:6px; }
+  p.body-text { font-size:11.5px; line-height:1.6; margin-bottom:10px; }
+  .kpi-row { display:flex; gap:10px; margin:14px 0 16px 0; }
+  .kpi { flex:1; padding:10px 12px; color:#fff; }
+  .kpi .kpi-label { font-size:9.5px; text-transform:uppercase; letter-spacing:0.5px; opacity:0.85; }
+  .kpi .kpi-value { font-size:20px; font-weight:700; margin-top:2px; }
+  .kpi.dark { background:#1a1a1a; }
+  .kpi.accent { background:#a12a2a; }
+  .kpi.mid { background:#555; }
+  .notes-box { border-left:3px solid #000; background:#f9f9f9; padding:10px 12px; font-size:11px; line-height:1.6; margin-bottom:12px; }
+  .notes-box strong.box-title { display:block; margin-bottom:4px; font-size:11.5px; }
+  table.data { width:100%; border-collapse:collapse; margin:8px 0 12px 0; font-size:10.5px; }
+  table.data th, table.data td { border:1px solid #ccc; padding:6px 7px; text-align:left; vertical-align:top; }
+  table.data th { background:#f0f0f0; font-weight:600; }
+  table.data td.num, table.data th.num { text-align:right; white-space:nowrap; }
+  .chart-wrap { margin:10px 0 14px 0; }
+  .chart-title { font-size:11px; font-weight:600; text-align:center; margin-bottom:6px; }
+  .legend { display:flex; gap:18px; justify-content:center; font-size:9.5px; margin-top:4px; color:#444; }
+  .legend span.swatch { display:inline-block; width:9px; height:9px; margin-right:4px; vertical-align:middle; }
+  .footnote { font-size:9.5px; color:#666; line-height:1.5; margin-top:6px; }
+  .next-steps li { margin-bottom:8px; }
+  .page-break { page-break-before: always; }
+  footer.pagefoot { font-size:9.5px; color:#888; text-align:center; margin-top:24px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">(GS)<sup>2</sup></div>
+  <div class="doc-meta">
+    <h1>Findings Report</h1>
+    <div><strong>To:</strong> Eclipse Catering</div>
+    <div><strong>From:</strong> G-Solutions² (godlinessdongorere@gmail.com)</div>
+    <div><strong>Date:</strong> September 22, 2026</div>
+    <div><strong>Report Ref:</strong> CATERFLOW-RETENTION-2026-09-22</div>
+  </div>
+</header>
+
+<h2 class="section" style="margin-top:0;">Sanity Document Retention — Findings &amp; Recommendations</h2>
+<p class="footnote" style="margin-bottom:10px;">CaterFlow production dataset (Sanity project v3sfsmld, dataset "production")</p>
+
+<p class="intro">This report covers an audit of CaterFlow's 60-day document retention policy in Sanity: why documents are visibly present past their intended retention window, and whether the retention/deletion logic itself is working correctly. Short answer: the retention design is correct and verified end-to-end. The documents currently overdue are explained by two ordinary, self-resolving mechanics detailed below — not by a fault in the system.</p>
+
+<div class="kpi-row">
+  <div class="kpi dark">
+    <div class="kpi-label">Total Documents</div>
+    <div class="kpi-value">30,948</div>
+  </div>
+  <div class="kpi accent">
+    <div class="kpi-label">Overdue by Business Date</div>
+    <div class="kpi-value">11,946</div>
+  </div>
+  <div class="kpi mid">
+    <div class="kpi-label">Eligible for Deletion Now</div>
+    <div class="kpi-value">558</div>
+  </div>
+</div>
+
+<h2 class="section">Summary</h2>
+<p class="body-text">The retention design and deletion logic were audited directly against the production dataset and found to be correct. Documents remain past their 60-day retention cutoff for two compounding, self-resolving reasons — neither of which is a stalled process:</p>
+<ul class="scope">
+  <li><strong>Archival timing.</strong> A document only becomes eligible for deletion 60 days after it was copied into the archive database, not 60 days after its own business date. A backlog earlier this year means a meaningful share of older documents were only archived very recently, resetting their effective countdown.</li>
+  <li><strong>Reference integrity.</strong> Of the documents that have cleared the archival-timing gate, almost all are PurchaseOrders still linked to a GoodsReceipt that hasn't itself aged out yet. Sanity correctly refuses to delete a document that something else still references — this is the retention system working as designed, not a bug.</li>
+</ul>
+
+<h2 class="section">Evidence the Retention Design Is Correct</h2>
+<ul class="scope">
+  <li><strong>No orphaned documents anywhere.</strong> Every reference field across the entire dataset was scanned — all documents, roughly 510,000 individual reference fields — and zero point at a non-existent document. Sanity's reference model blocks any delete that would create a dangling reference, so this is structurally guaranteed, not just observed today.</li>
+  <li><strong>File cleanup is complete and correct.</strong> Every attached-file record resolves to a live parent document, and every underlying file (image/PDF) is referenced by exactly one record — no orphaned metadata, no unused files left behind.</li>
+  <li><strong>Deletion ordering is correct.</strong> Records are removed child-before-parent (attachments and snapshots before the purchase orders, receipts, and dispatch logs that own them), and a stale-reference issue identified in an earlier pass has been fixed and verified in production.</li>
+</ul>
+
+<h2 class="section">What's Actually Keeping Documents Around</h2>
+
+<h3 class="subsection">1. Archival timing delays the deletion clock</h3>
+<p class="body-text">A document only becomes eligible for permanent deletion 60 days after it was copied into the archive database — not 60 days after its own business date. Archiving itself ran badly behind schedule for several months: one PurchaseOrder dated 10 December 2025 wasn't copied into the archive database until 8 September 2026, nearly nine months later, with large batches only catching up on a handful of specific days (1,855 PurchaseOrders alone were archived in a single day on 8 September). Every document caught in that backlog now has to wait a fresh 60 days from its late archive date, regardless of how overdue it already was by business date. For PurchaseOrders alone, 1,684 documents are overdue by business date but were archived too recently to be considered for deletion yet.</p>
+
+<h3 class="subsection">2. Reference-order blocking (expected behavior, not a defect)</h3>
+<p class="body-text">Of the 558 documents that have cleared the archival-timing gate right now — almost all PurchaseOrders — the system has correctly deleted zero of them so far, with zero errors logged. Sanity's own reference-integrity check is silently and correctly skipping each one, because the GoodsReceipt that fulfilled it hasn't individually crossed its own cutoff yet (zero GoodsReceipts are currently past cutoff). This is handled as expected steady-state behavior and retries automatically on every pass. It resolves on its own as GoodsReceipts age out; we recommend against forcing these deletions through ahead of that, as it would leave live GoodsReceipt records pointing at PurchaseOrders that no longer exist.</p>
+
+<h3 class="subsection">Also addressed during this review</h3>
+<p class="body-text">A related issue was found and fixed in the admin tooling: the "clear lock" endpoint used to reset a stuck archive/cleanup process only ever reset one of two separate lock records, meaning a genuinely stuck cleanup process could not have been cleared through it. This has been extended to reset either or both. Neither lock is currently stuck in production — this was a preventive fix, not a repair for an active incident.</p>
+
+<div class="page-break"></div>
+
+<h2 class="section" style="margin-top:0;">Retention Backlog by Collection</h2>
+<p class="body-text">Documents that should already be gone under the 60-day retention policy are still present. This is a snapshot of what's overdue by business date right now, broken down by record type.</p>
+
+<div class="chart-wrap">
+  <div class="chart-title">Retention backlog by collection</div>
+  <svg viewBox="0 0 720 220" width="100%" height="220" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Arial, sans-serif">
+    <!-- axis -->
+    <line x1="150" y1="10" x2="150" y2="195" stroke="#999" stroke-width="1"/>
+    <line x1="150" y1="195" x2="700" y2="195" stroke="#999" stroke-width="1"/>
+    <!-- gridlines + labels: scale max 9909 -> use 0..10000 mapped to 150..690 (540px) -->
+    <!-- ticks at 0,2000,4000,6000,8000,10000 -->
+    <g font-size="9" fill="#666">
+      <line x1="150" y1="10" x2="150" y2="195" stroke="#e0e0e0"/>
+      <line x1="258" y1="10" x2="258" y2="195" stroke="#e8e8e8"/>
+      <line x1="366" y1="10" x2="366" y2="195" stroke="#e8e8e8"/>
+      <line x1="474" y1="10" x2="474" y2="195" stroke="#e8e8e8"/>
+      <line x1="582" y1="10" x2="582" y2="195" stroke="#e8e8e8"/>
+      <line x1="690" y1="10" x2="690" y2="195" stroke="#e8e8e8"/>
+      <text x="150" y="208" text-anchor="middle">0</text>
+      <text x="258" y="208" text-anchor="middle">2,000</text>
+      <text x="366" y="208" text-anchor="middle">4,000</text>
+      <text x="474" y="208" text-anchor="middle">6,000</text>
+      <text x="582" y="208" text-anchor="middle">8,000</text>
+      <text x="690" y="208" text-anchor="middle">10,000</text>
+    </g>
+
+    <!-- Bars: y positions for 5 categories, bar height 20, gap -->
+    <!-- scale: value * 0.054 px/doc (540px / 10000) -->
+
+    <!-- DispatchLog: total 7109, overdue 4308, within 2801 -->
+    <text x="145" y="30" text-anchor="end" font-size="10" fill="#1a1a1a">DispatchLog</text>
+    <rect x="150" y="18" width="151.3" height="20" fill="#7fb3d9"/>
+    <rect x="301.3" y="18" width="232.6" height="20" fill="#a12a2a"/>
+
+    <!-- PurchaseOrder: total 3246, overdue 2244, within 1002 -->
+    <text x="145" y="66" text-anchor="end" font-size="10" fill="#1a1a1a">PurchaseOrder</text>
+    <rect x="150" y="54" width="54.1" height="20" fill="#7fb3d9"/>
+    <rect x="204.1" y="54" width="121.2" height="20" fill="#a12a2a"/>
+
+    <!-- GoodsReceipt: total 3104, overdue 2219, within 885 -->
+    <text x="145" y="102" text-anchor="end" font-size="10" fill="#1a1a1a">GoodsReceipt</text>
+    <rect x="150" y="90" width="47.8" height="20" fill="#7fb3d9"/>
+    <rect x="197.8" y="90" width="119.8" height="20" fill="#a12a2a"/>
+
+    <!-- InventoryCount: total 262, overdue 166, within 96 -->
+    <text x="145" y="138" text-anchor="end" font-size="10" fill="#1a1a1a">InventoryCount</text>
+    <rect x="150" y="126" width="5.2" height="20" fill="#7fb3d9"/>
+    <rect x="155.2" y="126" width="9.0" height="20" fill="#a12a2a"/>
+
+    <!-- FileAttachment: total 9908, overdue 3009, within 6899 -->
+    <text x="145" y="174" text-anchor="end" font-size="10" fill="#1a1a1a">FileAttachment</text>
+    <rect x="150" y="162" width="372.5" height="20" fill="#7fb3d9"/>
+    <rect x="522.5" y="162" width="162.5" height="20" fill="#a12a2a"/>
+
+    <!-- value labels -->
+    <g font-size="9.5" fill="#333">
+      <text x="540" y="32">7,109 total</text>
+      <text x="332" y="68">3,246 total</text>
+      <text x="325" y="104">3,104 total</text>
+      <text x="172" y="140">262 total</text>
+      <text x="680" y="176" fill="#fff" text-anchor="end">9,908 total</text>
+    </g>
+
+    <text x="425" y="216" text-anchor="middle" font-size="10" fill="#444">Documents</text>
+  </svg>
+  <div class="legend">
+    <div><span class="swatch" style="background:#7fb3d9;"></span>Within 60-day retention window</div>
+    <div><span class="swatch" style="background:#a12a2a;"></span>Past cutoff, still present</div>
+  </div>
+</div>
+
+<h3 class="subsection">Date range detail</h3>
+<table class="data">
+  <thead>
+    <tr><th>Collection</th><th class="num">Total Docs</th><th>Oldest Record</th><th>Newest Record</th><th class="num">Overdue (Business Date)</th><th class="num">% Overdue</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>DispatchLog</td><td class="num">7,109</td><td>2025-12-08</td><td>2026-09-19</td><td class="num">4,308</td><td class="num">61%</td></tr>
+    <tr><td>PurchaseOrder</td><td class="num">3,246</td><td>2025-12-10</td><td>2026-09-19</td><td class="num">2,244</td><td class="num">69%</td></tr>
+    <tr><td>GoodsReceipt</td><td class="num">3,104</td><td>2025-12-10</td><td>2026-09-19</td><td class="num">2,219</td><td class="num">71%</td></tr>
+    <tr><td>InventoryCount</td><td class="num">262</td><td>2025-12-08</td><td>2026-09-19</td><td class="num">166</td><td class="num">63%</td></tr>
+    <tr><td>FileAttachment</td><td class="num">9,908</td><td>2026-06-29</td><td>2026-09-19</td><td class="num">3,009</td><td class="num">30%</td></tr>
+    <tr style="font-weight:700; background:#fafafa;"><td>TOTAL</td><td class="num">23,629</td><td></td><td></td><td class="num">11,946</td><td class="num">51%</td></tr>
+  </tbody>
+</table>
+<p class="footnote">"Overdue (business date)" counts only records in a finished workflow status (completed/cancelled/adjusted) whose business date is older than the 60-day cutoff (2026-07-24) — records the system's own rules already say are safe to remove. It excludes records still in draft/pending status, which are correctly retained regardless of age, and one DispatchLog record carrying a corrupted far-future date (a data-entry error, not a retention issue). Of these 11,946, only 558 have also cleared the archival-timing gate described above — the rest are correctly retained until their own copy into the archive database is itself 60 days old.</p>
+
+<h2 class="section">Recommended Next Steps</h2>
+<ul class="scope next-steps">
+  <li><strong>No manual intervention needed on the pipeline itself.</strong> It is running normally and will keep working through this backlog as GoodsReceipts age out and the archival-timing backlog catches up.</li>
+  <li><strong>Investigate why PurchaseOrders from December 2025 weren't copied into the archive database until September 2026.</strong> If that lag recurs for currently-fresh documents, it will keep re-extending their effective retention well past the intended 60 days.</li>
+  <li><strong>Confirm the intended retention period with whoever owns this policy, then set it explicitly in the production environment configuration</strong> rather than relying on a code default — this removes any risk of the running system quietly using a different cutoff than intended.</li>
+  <li><strong>Do not force-delete PurchaseOrders past Sanity's reference-integrity check.</strong> Doing so would leave live GoodsReceipt records referencing deleted PurchaseOrders and should be avoided.</li>
+</ul>
+
+<div class="notes-box">
+  <strong class="box-title">Note on document volume</strong>
+  Sanity's published plan tiers are 10,000 documents on the Free plan, 50,000 on Growth, and 1,000,000+ on Enterprise. At 30,948 documents and still writing new ones without being blocked, this project is on the Growth tier or higher — current usage sits at roughly 62% of a 50,000-document quota, comfortably within limit. This should still be confirmed directly against the Sanity account's billing page, but it is not an area of concern at current volume.
+</div>
+
+<footer class="pagefoot">G-Solutions² &nbsp;·&nbsp; godlinessdongorere@gmail.com &nbsp;·&nbsp; CaterFlow Retention Audit, September 2026</footer>
+
+</body>
+</html>

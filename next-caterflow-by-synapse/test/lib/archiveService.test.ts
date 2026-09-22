@@ -298,7 +298,7 @@ describe("cleanupCollectionBatched", () => {
     (writeClient.transaction as jest.Mock).mockClear();
   });
 
-  it("queries only Mongo copies that are archived, past cutoff, and not already deleted", async () => {
+  it("queries only Mongo copies that are archived, past cutoff (by the collection's own business date), and not already deleted", async () => {
     const { db, find } = createCleanupMockDb();
     const cutoffDate = "2026-01-01T00:00:00.000Z";
 
@@ -313,14 +313,51 @@ describe("cleanupCollectionBatched", () => {
 
     expect(find).toHaveBeenCalledTimes(1);
     const query = find.mock.calls[0][0];
+    // FileAttachments' own business date is `uploadedAt` (see
+    // CLEANUP_DATE_FIELD / archiveFileAttachments' `uploadedAt < $cutoff`
+    // filter) — NOT `_archivedAt` (when the doc was copied into Mongo).
+    // Regression test: these two clocks used to be conflated, which meant a
+    // document only became delete-eligible ARCHIVE_DAYS after it happened to
+    // be (re-)archived into Mongo, regardless of how old the actual business
+    // record was.
     expect(query).toMatchObject({
       _isArchived: true,
-      _archivedAt: { $lt: cutoffDate },
+      uploadedAt: { $lt: cutoffDate },
       _sanityDeletedAt: { $exists: false },
     });
+    expect(query._archivedAt).toBeUndefined();
     // FileAttachments has no workflow status, so DELETE_SAFE_STATUS must not
     // add a status clause for it.
     expect(query.status).toBeUndefined();
+  });
+
+  it("compares against each collection's own business date field, not _archivedAt", async () => {
+    const cutoffDate = "2026-01-01T00:00:00.000Z";
+    const cases: Array<[string, string]> = [
+      ["archived_dispatch_logs", "dispatchDate"],
+      ["archived_purchase_orders", "orderDate"],
+      ["archived_goods_receipts", "receiptDate"],
+      ["archived_internal_transfers", "transferDate"],
+      ["archived_stock_adjustments", "adjustmentDate"],
+      ["archived_inventory_counts", "countDate"],
+      ["archived_file_attachments", "uploadedAt"],
+      ["archived_stock_snapshots", "_createdAt"],
+    ];
+
+    for (const [collectionName, dateField] of cases) {
+      const { db, find } = createCleanupMockDb();
+      await cleanupCollectionBatched({
+        db,
+        collectionName,
+        cutoffDate,
+        resumeCursor: null,
+        checkTimeBudget: () => false,
+        errors: [],
+      });
+      const query = find.mock.calls[0][0];
+      expect(query[dateField]).toEqual({ $lt: cutoffDate });
+      expect(query._archivedAt).toBeUndefined();
+    }
   });
 
   it("additionally requires a finished workflow status for gated collections", async () => {

@@ -1486,6 +1486,35 @@ const CLEANUP_COLLECTIONS_TO_PROCESS = [
   },
 ];
 
+// Which field on the ARCHIVED MONGO COPY holds each collection's own
+// business date — the same field each archive step's Sanity filter already
+// keys off (e.g. `dispatchDate < $cutoff` in archiveDispatchLogs). This is
+// what cleanupCollectionBatched's ARCHIVE_DAYS cutoff is supposed to compare
+// against per the comment above isBlockedByExistingReferences ("each
+// document type uses its own business date field, so a PurchaseOrder and
+// the GoodsReceipt that references it routinely cross the delete cutoff at
+// different times") — the query below used to compare against `_archivedAt`
+// (when the doc was copied into Mongo) instead, which is a completely
+// different clock. That mismatch meant a document only became eligible for
+// permanent Sanity deletion ARCHIVE_DAYS after it happened to be (re-)copied
+// into Mongo, regardless of how old the actual business record was — so a
+// dispatch from a year ago that got re-archived yesterday (e.g. after the
+// 2026-09-21 Mongo cluster migration re-synced everything) was locked out of
+// deletion for another ARCHIVE_DAYS, no matter its real age. Confirmed
+// directly against production data on 2026-09-22: under the old
+// `_archivedAt` gate, 0 of 7,103 archived DispatchLogs were deletable even
+// though 3,091 of them are genuinely past the business-date cutoff.
+const CLEANUP_DATE_FIELD: Partial<Record<string, string>> = {
+  [COLLECTIONS.DISPATCH_LOGS]: "dispatchDate",
+  [COLLECTIONS.PURCHASE_ORDERS]: "orderDate",
+  [COLLECTIONS.GOODS_RECEIPTS]: "receiptDate",
+  [COLLECTIONS.INTERNAL_TRANSFERS]: "transferDate",
+  [COLLECTIONS.STOCK_ADJUSTMENTS]: "adjustmentDate",
+  [COLLECTIONS.INVENTORY_COUNTS]: "countDate",
+  [COLLECTIONS.FILE_ATTACHMENTS]: "uploadedAt",
+  [COLLECTIONS.STOCK_SNAPSHOTS]: "_createdAt",
+};
+
 // Safety gate for permanent Sanity deletion: a document is only eligible
 // once its own workflow `status` shows it's actually finished (completed /
 // adjusted) or explicitly cancelled — never while it's still draft,
@@ -1584,9 +1613,17 @@ export async function cleanupCollectionBatched(options: {
     }
 
     const batchStartedMs = Date.now();
+    // Compare against the document's own business date (dispatchDate,
+    // orderDate, ...), not `_archivedAt` — see CLEANUP_DATE_FIELD above for
+    // why. Falls back to `_archivedAt` only if a collection has no mapped
+    // business-date field (shouldn't happen for anything in
+    // CLEANUP_COLLECTIONS_TO_PROCESS, but keeps this from silently matching
+    // nothing if that list and this map ever drift apart).
+    const cleanupDateField =
+      CLEANUP_DATE_FIELD[options.collectionName] || "_archivedAt";
     const query: Record<string, any> = {
       _isArchived: true,
-      _archivedAt: { $lt: options.cutoffDate },
+      [cleanupDateField]: { $lt: options.cutoffDate },
       // Skip anything already cleaned up in a previous pass — see comment
       // above the engine header for why this matters.
       _sanityDeletedAt: { $exists: false },
@@ -2681,15 +2718,28 @@ export async function runArchive(
     const allowedMs = maxSeconds * 1000;
     startMs = Date.now();
 
-    // Only skip steps that already succeeded within THIS SAME run (i.e. we are
-    // resuming a specific incomplete run after a timeout). Must not match any
-    // other historical run — otherwise, once a step type succeeds once, it
-    // would be skipped in every future run forever, and newly-eligible
-    // documents of that type would never get archived again. Must also
-    // exclude the "archive-progress" singleton doc, which carries the same
-    // runId (it was just stamped a few lines above) but has no `.steps`.
+    // Only skip steps that already succeeded in a run that's still genuinely
+    // incomplete (i.e. we are resuming after a timeout, not starting a fresh
+    // pass). Matching on `{ incomplete: true }` rather than `{ runId }` is
+    // deliberate: this used to require the SAME runId, but every path that
+    // mints a fresh runId — a brand-new "queued" trigger, or the stale-progress
+    // detector (ARCHIVE_PROGRESS_STALE_MS, 5 minutes) marking the singleton
+    // "failed" after a gap between invocations — gave the next invocation a
+    // different runId with no matching history, silently discarding
+    // stepCursors and completedSteps and restarting the entire 8-step archive
+    // from DispatchLogs even when a prior attempt had already gotten several
+    // steps in. Confirmed against production data on 2026-09-22: a
+    // 7,000+-document DispatchLogs pass was repeatedly re-scanned from
+    // scratch this way. `{ incomplete: true }` still can't match a
+    // COMPLETED historical run (the exact case the old comment was guarding
+    // against — a step type that succeeded once being skipped forever),
+    // since a finished run is always saved with `incomplete: false`; it just
+    // also correctly finds a genuinely paused attempt regardless of which
+    // runId label happens to be active for this invocation. Must also
+    // exclude the "archive-progress" singleton doc, which is never itself an
+    // `incomplete: true` run record but is excluded here defensively anyway.
     const lastRun = await db.collection(COLLECTIONS.ARCHIVE_RUNS).findOne(
-      { runId, _id: { $ne: progressId } } as any,
+      { incomplete: true, _id: { $ne: progressId } } as any,
       { sort: { startedAt: -1 } },
     );
     const completedSteps = new Set<string>();
