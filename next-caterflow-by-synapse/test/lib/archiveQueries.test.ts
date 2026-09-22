@@ -10,7 +10,19 @@ jest.mock("@/lib/mongoClient", () => ({
   getArchiveDb: jest.fn(),
   COLLECTIONS: {
     ARCHIVE_RUNS: "archive_runs",
+    STOCK_BASELINES: "stock_baselines",
   },
+}));
+
+// archiveQueries.ts's getLatestStockBaseline() now imports
+// reconstructStockBaselineChain from archiveService.ts, which transitively
+// pulls in @/lib/sanity -> next-sanity (an ESM-only package Jest's default
+// transform can't parse). None of that is exercised by getRecentArchiveRuns
+// (this file's only subject), so stub the whole module out rather than
+// dragging archiveService.test.ts's full sanity/mongodb/next-sanity mock
+// setup in here too.
+jest.mock("@/lib/archiveService", () => ({
+  reconstructStockBaselineChain: jest.fn(),
 }));
 
 import { getRecentArchiveRuns } from "@/lib/archiveQueries";

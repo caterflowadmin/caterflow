@@ -2,6 +2,7 @@
 // MongoDB query helpers for fetching archived data — used by the API routes
 
 import { getArchiveDb, COLLECTIONS } from "@/lib/mongoClient";
+import { reconstructStockBaselineChain } from "@/lib/archiveService";
 import type { Filter } from "mongodb";
 
 // ─── Generic helpers ───────────────────────────────────────────────────────────
@@ -395,7 +396,21 @@ export async function getRecentArchiveRuns(limit = 10) {
 
 export async function getLatestStockBaseline() {
   const db = await getArchiveDb();
-  return db
+  const latest = await db
     .collection(COLLECTIONS.STOCK_BASELINES)
     .findOne({}, { sort: { capturedAt: -1 } });
+  if (!latest) return null;
+
+  // Storage is diff-based (see reconstructStockBaselineChain in
+  // archiveService.ts): the latest doc may only hold what changed since its
+  // anchor full snapshot. Reconstruct the full item/bin state before
+  // returning, so callers keep seeing the same `{ ...doc, stockData: {
+  // items } }` shape they always have, regardless of how it's stored.
+  const reconstructed = await reconstructStockBaselineChain(db, latest);
+  if (!reconstructed) return null; // orphaned/corrupted chain — degrade to "no baseline available"
+
+  return {
+    ...latest,
+    stockData: { items: reconstructed.items },
+  };
 }

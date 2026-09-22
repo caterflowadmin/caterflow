@@ -5,7 +5,7 @@
 // against any environment, including one whose .env points at production.
 
 jest.mock("@/lib/sanity", () => ({
-  client: {},
+  client: { fetch: jest.fn() },
   writeClient: { delete: jest.fn(), transaction: jest.fn() },
 }));
 
@@ -59,8 +59,13 @@ import {
   insertIfNotExists,
   cleanupCollectionBatched,
   cleanupArchivedSanityData,
+  captureStockBaseline,
+  computeStockBaselineDiff,
+  reconstructStockBaselineChain,
+  cleanupOldArchiveMetadata,
+  ensureIndexes,
 } from "@/lib/archiveService";
-import { writeClient } from "@/lib/sanity";
+import { writeClient, client as sanityClient } from "@/lib/sanity";
 import { getArchiveDb } from "@/lib/mongoClient";
 
 describe("normalizeForComparison / stableSerialize", () => {
@@ -774,5 +779,545 @@ describe("cleanupArchivedSanityData", () => {
     const firstUpdateArgs = progressUpdateOne.mock.calls[0];
     expect(firstUpdateArgs[1].$set.status).toBe("running");
     expect(firstUpdateArgs[1].$set.errors).toEqual([]);
+  });
+});
+
+// captureStockBaseline() used to run unconditionally on every runArchive()
+// call — including every resumeIncompleteArchives() retry, fired every 5
+// minutes — which drove stock_baselines to ~5-8 captures/day instead of the
+// intended 1/day and blew through the Atlas free-tier quota (378MB of a
+// 512MB cap). These tests cover the captureDay dedupe fix that stops that.
+describe("captureStockBaseline (captureDay dedupe)", () => {
+  const REAL_DATE_NOW = Date.now;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    Date.now = REAL_DATE_NOW;
+  });
+
+  function mockDbWithBaselineCollection(overrides: {
+    findOne?: jest.Mock;
+    insertOne?: jest.Mock;
+  }) {
+    const baselineCollection = {
+      findOne: overrides.findOne || jest.fn().mockResolvedValue(null),
+      insertOne: overrides.insertOne || jest.fn().mockResolvedValue({}),
+    };
+    const db = {
+      collection: jest.fn().mockReturnValue(baselineCollection),
+    } as any;
+    return { db, baselineCollection };
+  }
+
+  it("skips the Sanity fetch and insert entirely when today is already captured", async () => {
+    const todayIso = new Date().toISOString();
+    const captureDay = todayIso.slice(0, 10);
+    const findOne = jest.fn().mockResolvedValue({ captureDay });
+    const insertOne = jest.fn();
+    const { db } = mockDbWithBaselineCollection({ findOne, insertOne });
+
+    await captureStockBaseline(db);
+
+    expect(findOne).toHaveBeenCalledTimes(1);
+    expect(sanityClient.fetch).not.toHaveBeenCalled();
+    expect(insertOne).not.toHaveBeenCalled();
+  });
+
+  it("captures when the latest doc is from a different day", async () => {
+    const findOne = jest.fn().mockResolvedValue({ captureDay: "2000-01-01" });
+    const insertOne = jest.fn().mockResolvedValue({});
+    const { db } = mockDbWithBaselineCollection({ findOne, insertOne });
+    (sanityClient.fetch as jest.Mock).mockResolvedValue({
+      stockData: { items: [] },
+      lastUpdated: "2026-09-22T00:00:00.000Z",
+    });
+
+    await captureStockBaseline(db);
+
+    expect(insertOne).toHaveBeenCalledTimes(1);
+    const inserted = insertOne.mock.calls[0][0];
+    expect(inserted.captureDay).toBe(new Date().toISOString().slice(0, 10));
+  });
+
+  it("captures on the very first run when there is no prior doc at all", async () => {
+    const findOne = jest.fn().mockResolvedValue(null);
+    const insertOne = jest.fn().mockResolvedValue({});
+    const { db } = mockDbWithBaselineCollection({ findOne, insertOne });
+    (sanityClient.fetch as jest.Mock).mockResolvedValue({
+      stockData: { items: [] },
+      lastUpdated: "2026-09-22T00:00:00.000Z",
+    });
+
+    await captureStockBaseline(db);
+
+    expect(insertOne).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a lost captureDay race (E11000) as a normal no-op, not an error", async () => {
+    const findOne = jest.fn().mockResolvedValue(null);
+    const insertOne = jest.fn().mockRejectedValue({ code: 11000 });
+    const { db } = mockDbWithBaselineCollection({ findOne, insertOne });
+    (sanityClient.fetch as jest.Mock).mockResolvedValue({
+      stockData: { items: [] },
+      lastUpdated: "2026-09-22T00:00:00.000Z",
+    });
+
+    await expect(captureStockBaseline(db)).resolves.toBeUndefined();
+    expect(insertOne).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not throw when the Sanity registry has no stockData", async () => {
+    const findOne = jest.fn().mockResolvedValue(null);
+    const insertOne = jest.fn();
+    const { db } = mockDbWithBaselineCollection({ findOne, insertOne });
+    (sanityClient.fetch as jest.Mock).mockResolvedValue(null);
+
+    await expect(captureStockBaseline(db)).resolves.toBeUndefined();
+    expect(insertOne).not.toHaveBeenCalled();
+  });
+});
+
+function bin(overrides: Partial<Record<string, any>> = {}) {
+  return {
+    binId: "b1",
+    quantity: 10,
+    lastUpdated: "2026-09-01T00:00:00.000Z",
+    lastTransactionId: "t1",
+    lastTransactionType: "goodsReceipt",
+    ...overrides,
+  };
+}
+
+describe("computeStockBaselineDiff", () => {
+  it("produces an empty diff when nothing changed", () => {
+    const items = [{ stockItemId: "A", binQuantities: { bins: [bin()] } }];
+    const { changedItems, removedItemIds } = computeStockBaselineDiff(
+      items,
+      items.map((i) => ({ ...i, binQuantities: { bins: [{ ...bin() }] } })),
+    );
+    expect(changedItems).toEqual([]);
+    expect(removedItemIds).toEqual([]);
+  });
+
+  it("includes only the changed bin, not untouched siblings", () => {
+    const previous = [
+      {
+        stockItemId: "A",
+        binQuantities: { bins: [bin({ binId: "b1" }), bin({ binId: "b2" })] },
+      },
+    ];
+    const current = [
+      {
+        stockItemId: "A",
+        binQuantities: {
+          bins: [bin({ binId: "b1", quantity: 99 }), bin({ binId: "b2" })],
+        },
+      },
+    ];
+    const { changedItems } = computeStockBaselineDiff(previous, current);
+    expect(changedItems).toEqual([
+      { stockItemId: "A", bins: [bin({ binId: "b1", quantity: 99 })] },
+    ]);
+  });
+
+  it("marks a bin removed from an item as {binId, removed:true}", () => {
+    const previous = [
+      {
+        stockItemId: "A",
+        binQuantities: { bins: [bin({ binId: "b1" }), bin({ binId: "b2" })] },
+      },
+    ];
+    const current = [
+      { stockItemId: "A", binQuantities: { bins: [bin({ binId: "b1" })] } },
+    ];
+    const { changedItems } = computeStockBaselineDiff(previous, current);
+    expect(changedItems).toEqual([
+      { stockItemId: "A", bins: [{ binId: "b2", removed: true }] },
+    ]);
+  });
+
+  it("includes every bin for a brand-new item", () => {
+    const previous: any[] = [];
+    const current = [
+      { stockItemId: "A", binQuantities: { bins: [bin()] } },
+    ];
+    const { changedItems } = computeStockBaselineDiff(previous, current);
+    expect(changedItems).toEqual([{ stockItemId: "A", bins: [bin()] }]);
+  });
+
+  it("puts an entirely-removed item in removedItemIds, not changedItems", () => {
+    const previous = [{ stockItemId: "A", binQuantities: { bins: [bin()] } }];
+    const current: any[] = [];
+    const { changedItems, removedItemIds } = computeStockBaselineDiff(
+      previous,
+      current,
+    );
+    expect(changedItems).toEqual([]);
+    expect(removedItemIds).toEqual(["A"]);
+  });
+
+  it("handles empty arrays on both sides without throwing", () => {
+    expect(computeStockBaselineDiff([], [])).toEqual({
+      changedItems: [],
+      removedItemIds: [],
+    });
+  });
+});
+
+const ANCHOR_ID = "507f1f77bcf86cd799439011";
+const OTHER_ANCHOR_ID = "507f1f77bcf86cd799439099";
+
+function makeReconstructDb(docsById: Record<string, any>, diffs: any[]) {
+  const findOne = jest.fn(async (query: any) => {
+    const idStr = query?._id?.toString?.();
+    return idStr ? docsById[idStr] ?? null : null;
+  });
+  const find = jest.fn((query: any) => {
+    const matches = diffs
+      .filter(
+        (d) =>
+          d.type === "diff" &&
+          d.baseId === query.baseId &&
+          new Date(d.capturedAt).getTime() <=
+            new Date(query.capturedAt.$lte).getTime(),
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.capturedAt).getTime() - new Date(b.capturedAt).getTime(),
+      );
+    return {
+      sort: jest.fn().mockReturnValue({
+        toArray: jest.fn().mockResolvedValue(matches),
+      }),
+    };
+  });
+  const db = { collection: jest.fn().mockReturnValue({ findOne, find }) } as any;
+  return db;
+}
+
+describe("reconstructStockBaselineChain", () => {
+  it("returns a full doc's items as-is with no db lookups", async () => {
+    const db = { collection: jest.fn() } as any;
+    const fullDoc = {
+      type: "full",
+      capturedAt: new Date("2026-09-01T00:00:00.000Z"),
+      stockData: { items: [{ stockItemId: "A", binQuantities: { bins: [bin()] } }] },
+    };
+
+    const result = await reconstructStockBaselineChain(db, fullDoc);
+
+    expect(result?.items).toEqual(fullDoc.stockData.items);
+    expect(db.collection).not.toHaveBeenCalled();
+  });
+
+  it("treats a legacy doc with no type field as an implicit full doc", async () => {
+    const db = { collection: jest.fn() } as any;
+    const legacyDoc = {
+      capturedAt: "2026-08-23T08:22:16.879Z", // legacy: string, not Date
+      stockData: { items: [{ stockItemId: "A", binQuantities: { bins: [bin()] } }] },
+    };
+
+    const result = await reconstructStockBaselineChain(db, legacyDoc);
+
+    expect(result?.items).toEqual(legacyDoc.stockData.items);
+    expect(db.collection).not.toHaveBeenCalled();
+  });
+
+  it("applies a single diff on top of its anchor full doc", async () => {
+    const anchor = {
+      _id: { toString: () => ANCHOR_ID },
+      type: "full",
+      capturedAt: new Date("2026-09-01T00:00:00.000Z"),
+      stockData: { items: [{ stockItemId: "A", binQuantities: { bins: [bin({ quantity: 10 })] } }] },
+    };
+    const diff = {
+      type: "diff",
+      baseId: ANCHOR_ID,
+      capturedAt: new Date("2026-09-02T00:00:00.000Z"),
+      changedItems: [{ stockItemId: "A", bins: [bin({ quantity: 20 })] }],
+      removedItemIds: [],
+    };
+    const db = makeReconstructDb({ [ANCHOR_ID]: anchor }, [diff]);
+
+    const result = await reconstructStockBaselineChain(db, diff);
+
+    expect(result?.items).toEqual([
+      { stockItemId: "A", binQuantities: { bins: [bin({ quantity: 20 })] } },
+    ]);
+  });
+
+  it("replays chained diffs in capturedAt order, not array/insertion order", async () => {
+    const anchor = {
+      _id: { toString: () => ANCHOR_ID },
+      type: "full",
+      capturedAt: new Date("2026-09-01T00:00:00.000Z"),
+      stockData: { items: [{ stockItemId: "A", binQuantities: { bins: [bin({ quantity: 10 })] } }] },
+    };
+    const diff1 = {
+      type: "diff",
+      baseId: ANCHOR_ID,
+      capturedAt: new Date("2026-09-02T00:00:00.000Z"),
+      changedItems: [{ stockItemId: "A", bins: [bin({ quantity: 20 })] }],
+      removedItemIds: [],
+    };
+    const diff2 = {
+      type: "diff",
+      baseId: ANCHOR_ID,
+      capturedAt: new Date("2026-09-03T00:00:00.000Z"),
+      changedItems: [{ stockItemId: "A", bins: [bin({ quantity: 30 })] }],
+      removedItemIds: [],
+    };
+    // Deliberately out of chronological order in the backing array/collection.
+    const db = makeReconstructDb({ [ANCHOR_ID]: anchor }, [diff2, diff1]);
+
+    const result = await reconstructStockBaselineChain(db, diff2);
+
+    expect(result?.items[0].binQuantities.bins[0].quantity).toBe(30);
+  });
+
+  it("removes a bin marked removed:true during replay", async () => {
+    const anchor = {
+      _id: { toString: () => ANCHOR_ID },
+      type: "full",
+      capturedAt: new Date("2026-09-01T00:00:00.000Z"),
+      stockData: {
+        items: [
+          {
+            stockItemId: "A",
+            binQuantities: { bins: [bin({ binId: "b1" }), bin({ binId: "b2" })] },
+          },
+        ],
+      },
+    };
+    const diff = {
+      type: "diff",
+      baseId: ANCHOR_ID,
+      capturedAt: new Date("2026-09-02T00:00:00.000Z"),
+      changedItems: [{ stockItemId: "A", bins: [{ binId: "b2", removed: true }] }],
+      removedItemIds: [],
+    };
+    const db = makeReconstructDb({ [ANCHOR_ID]: anchor }, [diff]);
+
+    const result = await reconstructStockBaselineChain(db, diff);
+
+    expect(result?.items[0].binQuantities.bins.map((b: any) => b.binId)).toEqual(["b1"]);
+  });
+
+  it("removes an item listed in removedItemIds during replay", async () => {
+    const anchor = {
+      _id: { toString: () => ANCHOR_ID },
+      type: "full",
+      capturedAt: new Date("2026-09-01T00:00:00.000Z"),
+      stockData: {
+        items: [
+          { stockItemId: "A", binQuantities: { bins: [bin()] } },
+          { stockItemId: "B", binQuantities: { bins: [bin()] } },
+        ],
+      },
+    };
+    const diff = {
+      type: "diff",
+      baseId: ANCHOR_ID,
+      capturedAt: new Date("2026-09-02T00:00:00.000Z"),
+      changedItems: [],
+      removedItemIds: ["B"],
+    };
+    const db = makeReconstructDb({ [ANCHOR_ID]: anchor }, [diff]);
+
+    const result = await reconstructStockBaselineChain(db, diff);
+
+    expect(result?.items.map((i: any) => i.stockItemId)).toEqual(["A"]);
+  });
+
+  it("returns null and logs when the anchor doc is missing (expired/deleted)", async () => {
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const diff = {
+      type: "diff",
+      baseId: OTHER_ANCHOR_ID,
+      capturedAt: new Date("2026-09-02T00:00:00.000Z"),
+      changedItems: [],
+      removedItemIds: [],
+    };
+    const db = makeReconstructDb({}, [diff]); // anchor not present
+
+    const result = await reconstructStockBaselineChain(db, diff);
+
+    expect(result).toBeNull();
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("returns null and logs when a diff doc has no baseId", async () => {
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const malformedDiff = {
+      type: "diff",
+      capturedAt: new Date("2026-09-02T00:00:00.000Z"),
+    };
+    const db = { collection: jest.fn() } as any;
+
+    const result = await reconstructStockBaselineChain(db, malformedDiff);
+
+    expect(result).toBeNull();
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    expect(db.collection).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+});
+
+describe("captureStockBaseline (full-vs-diff decision)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  function makeCaptureFlowDb(opts: { latest: any; anchor?: any }) {
+    const insertOne = jest.fn().mockResolvedValue({});
+    const findOne = jest.fn(async (query: any, options?: any) => {
+      if (options?.sort) return opts.latest;
+      if (query?._id) return opts.anchor ?? null;
+      return null;
+    });
+    const find = jest.fn().mockReturnValue({
+      sort: jest.fn().mockReturnValue({ toArray: jest.fn().mockResolvedValue([]) }),
+    });
+    const db = {
+      collection: jest.fn().mockReturnValue({ findOne, find, insertOne }),
+    } as any;
+    return { db, insertOne };
+  }
+
+  it("captures type:'full' when there is no prior doc at all", async () => {
+    const { db, insertOne } = makeCaptureFlowDb({ latest: null });
+    (sanityClient.fetch as jest.Mock).mockResolvedValue({
+      stockData: { items: [{ stockItemId: "A", binQuantities: { bins: [bin()] } }] },
+      lastUpdated: "2026-09-22T00:00:00.000Z",
+    });
+
+    await captureStockBaseline(db);
+
+    expect(insertOne).toHaveBeenCalledTimes(1);
+    const doc = insertOne.mock.calls[0][0];
+    expect(doc.type).toBe("full");
+    expect(doc.capturedAt).toBeInstanceOf(Date);
+  });
+
+  it("captures type:'diff' with the correct baseId when the anchor is under 7 days old", async () => {
+    const anchor = {
+      _id: { toString: () => ANCHOR_ID },
+      type: "full",
+      captureDay: "2000-01-01",
+      capturedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+      stockData: { items: [{ stockItemId: "A", binQuantities: { bins: [bin({ quantity: 10 })] } }] },
+    };
+    const { db, insertOne } = makeCaptureFlowDb({ latest: anchor, anchor });
+    (sanityClient.fetch as jest.Mock).mockResolvedValue({
+      stockData: {
+        items: [{ stockItemId: "A", binQuantities: { bins: [bin({ quantity: 20 })] } }],
+      },
+      lastUpdated: "2026-09-22T00:00:00.000Z",
+    });
+
+    await captureStockBaseline(db);
+
+    expect(insertOne).toHaveBeenCalledTimes(1);
+    const doc = insertOne.mock.calls[0][0];
+    expect(doc.type).toBe("diff");
+    expect(doc.baseId).toBe(ANCHOR_ID);
+    expect(doc.changedItems).toEqual([
+      { stockItemId: "A", bins: [bin({ quantity: 20 })] },
+    ]);
+    expect(doc.removedItemIds).toEqual([]);
+  });
+
+  it("captures a fresh type:'full' when the anchor is 7+ days old", async () => {
+    const anchor = {
+      _id: { toString: () => ANCHOR_ID },
+      type: "full",
+      captureDay: "2000-01-01",
+      capturedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000),
+      stockData: { items: [] },
+    };
+    const { db, insertOne } = makeCaptureFlowDb({ latest: anchor, anchor });
+    (sanityClient.fetch as jest.Mock).mockResolvedValue({
+      stockData: { items: [{ stockItemId: "A", binQuantities: { bins: [bin()] } }] },
+      lastUpdated: "2026-09-22T00:00:00.000Z",
+    });
+
+    await captureStockBaseline(db);
+
+    const doc = insertOne.mock.calls[0][0];
+    expect(doc.type).toBe("full");
+  });
+
+  it("self-heals to type:'full' when the anchor is missing/orphaned", async () => {
+    const latest = {
+      _id: { toString: () => "507f1f77bcf86cd799439022" },
+      type: "diff",
+      baseId: ANCHOR_ID,
+      captureDay: "2000-01-01",
+      capturedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
+      changedItems: [],
+      removedItemIds: [],
+    };
+    // anchor deliberately omitted -> findOne({_id}) resolves null
+    const { db, insertOne } = makeCaptureFlowDb({ latest, anchor: null });
+    (sanityClient.fetch as jest.Mock).mockResolvedValue({
+      stockData: { items: [{ stockItemId: "A", binQuantities: { bins: [bin()] } }] },
+      lastUpdated: "2026-09-22T00:00:00.000Z",
+    });
+
+    await captureStockBaseline(db);
+
+    const doc = insertOne.mock.calls[0][0];
+    expect(doc.type).toBe("full");
+  });
+});
+
+describe("cleanupOldArchiveMetadata", () => {
+  it("compares stock_baselines.capturedAt as a Date, and archive_runs.startedAt as a string", async () => {
+    const deleteManyRuns = jest.fn().mockResolvedValue({ deletedCount: 2 });
+    const deleteManyBaselines = jest.fn().mockResolvedValue({ deletedCount: 5 });
+    const db = {
+      collection: jest.fn().mockImplementation((name: string) =>
+        name === "archive_runs"
+          ? { deleteMany: deleteManyRuns }
+          : { deleteMany: deleteManyBaselines },
+      ),
+    } as any;
+    (getArchiveDb as jest.Mock).mockResolvedValue(db);
+
+    const result = await cleanupOldArchiveMetadata();
+
+    const runsQuery = deleteManyRuns.mock.calls[0][0];
+    expect(typeof runsQuery.startedAt.$lt).toBe("string");
+
+    const baselinesQuery = deleteManyBaselines.mock.calls[0][0];
+    expect(baselinesQuery.capturedAt.$lt).toBeInstanceOf(Date);
+
+    expect(result.deletedRuns).toBe(2);
+    expect(result.deletedBaselines).toBe(5);
+  });
+});
+
+describe("ensureIndexes (stock_baselines)", () => {
+  it("creates a unique+sparse captureDay index and a 30-day TTL capturedAt index", async () => {
+    const createIndex = jest.fn().mockResolvedValue("ok");
+    const db = { collection: jest.fn().mockReturnValue({ createIndex }) } as any;
+
+    await ensureIndexes(db);
+
+    const captureDayCall = createIndex.mock.calls.find(
+      ([spec]: any[]) => spec.captureDay === 1,
+    );
+    expect(captureDayCall).toBeTruthy();
+    expect(captureDayCall![1]).toEqual({ unique: true, sparse: true });
+
+    const ttlCall = createIndex.mock.calls.find(
+      ([spec]: any[]) => spec.capturedAt === 1,
+    );
+    expect(ttlCall).toBeTruthy();
+    expect(ttlCall![1]).toEqual({ expireAfterSeconds: 30 * 24 * 60 * 60 });
   });
 });

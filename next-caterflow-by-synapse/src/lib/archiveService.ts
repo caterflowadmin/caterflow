@@ -702,9 +702,206 @@ export async function getMaxSequenceNumber(type: string): Promise<number> {
 }
 
 // ─── Stock Baseline Snapshot ───────────────────────────────────────────────────
+//
+// A disaster-recovery snapshot of Sanity's stockRegistry.stockData (every
+// stock item x every bin x every site), meant to run once/day. Originally a
+// full copy every time (~2.4MB/doc) with no dedupe against the 5-minute
+// resume cron — that combination drove this collection to 378MB (75% of the
+// whole 512MB-capped archive DB) before being fixed. Storage is now
+// diff-based: a full snapshot roughly every FULL_INTERVAL_MS, with
+// day-to-day diffs against the prior reconstructed state in between, plus a
+// 30-day TTL index (see ensureIndexes()) comfortably longer than the full
+// interval so a live chain's anchor never expires before its own diffs do.
+// Target steady state: ~8-12MB instead of hundreds of MB.
 
-async function captureStockBaseline(db: Db): Promise<void> {
+interface StockBaselineBin {
+  binId: string;
+  quantity: number;
+  lastUpdated: string;
+  lastTransactionId: string;
+  lastTransactionType: string;
+}
+
+interface StockBaselineRemovedBin {
+  binId: string;
+  removed: true;
+}
+
+interface StockBaselineItem {
+  stockItemId: string;
+  binQuantities: { bins: StockBaselineBin[] };
+}
+
+interface StockBaselineChangedItem {
+  stockItemId: string;
+  bins: Array<StockBaselineBin | StockBaselineRemovedBin>;
+}
+
+const STOCK_BASELINE_FULL_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+/**
+ * Diffs two stockData.items arrays at item/bin granularity. Reuses
+ * stableSerialize — the same key-order-independent equality archiveImporter.ts
+ * already uses for backup/restore diffing — so "changed" means the same
+ * thing everywhere in the archive pipeline.
+ */
+export function computeStockBaselineDiff(
+  previousItems: StockBaselineItem[],
+  currentItems: StockBaselineItem[],
+): { changedItems: StockBaselineChangedItem[]; removedItemIds: string[] } {
+  const prevMap = new Map<string, Map<string, StockBaselineBin>>();
+  for (const item of previousItems) {
+    const bins = new Map<string, StockBaselineBin>();
+    for (const bin of item.binQuantities?.bins || []) bins.set(bin.binId, bin);
+    prevMap.set(item.stockItemId, bins);
+  }
+
+  const currMap = new Map<string, Map<string, StockBaselineBin>>();
+  for (const item of currentItems) {
+    const bins = new Map<string, StockBaselineBin>();
+    for (const bin of item.binQuantities?.bins || []) bins.set(bin.binId, bin);
+    currMap.set(item.stockItemId, bins);
+  }
+
+  const changedItems: StockBaselineChangedItem[] = [];
+
+  for (const [stockItemId, currBins] of currMap.entries()) {
+    const prevBins = prevMap.get(stockItemId);
+    if (!prevBins) {
+      // Brand-new item — no prior state to diff against, include every bin.
+      changedItems.push({ stockItemId, bins: Array.from(currBins.values()) });
+      continue;
+    }
+
+    const binChanges: Array<StockBaselineBin | StockBaselineRemovedBin> = [];
+    for (const [binId, currBin] of currBins.entries()) {
+      const prevBin = prevBins.get(binId);
+      if (!prevBin || stableSerialize(currBin) !== stableSerialize(prevBin)) {
+        binChanges.push(currBin);
+      }
+    }
+    for (const binId of prevBins.keys()) {
+      if (!currBins.has(binId)) {
+        binChanges.push({ binId, removed: true });
+      }
+    }
+
+    if (binChanges.length > 0) {
+      changedItems.push({ stockItemId, bins: binChanges });
+    }
+  }
+
+  const removedItemIds: string[] = [];
+  for (const stockItemId of prevMap.keys()) {
+    if (!currMap.has(stockItemId)) removedItemIds.push(stockItemId);
+  }
+
+  return { changedItems, removedItemIds };
+}
+
+/**
+ * Reconstructs the full item/bin state for a stock_baselines doc: a 'full'
+ * doc — or a legacy doc with no `type` field, which predates this format
+ * and is always a full copy — is returned as-is; a 'diff' doc is rebuilt by
+ * walking back to its anchor full doc and replaying every diff in that
+ * chain, in chronological (capturedAt) order. Shared by
+ * captureStockBaseline() (to diff new data against) and
+ * getLatestStockBaseline() (to read).
+ */
+export async function reconstructStockBaselineChain(
+  db: Db,
+  latestDoc: any,
+): Promise<{ items: StockBaselineItem[]; capturedAt: Date | string } | null> {
+  if (!latestDoc) return null;
+
+  if (!latestDoc.type || latestDoc.type === "full") {
+    return {
+      items: latestDoc.stockData?.items || [],
+      capturedAt: latestDoc.capturedAt,
+    };
+  }
+
+  const anchorId = latestDoc.baseId;
+  if (!anchorId) {
+    console.error(
+      "Stock baseline diff doc missing baseId — cannot reconstruct:",
+      latestDoc._id,
+    );
+    return null;
+  }
+
+  const anchor = await db
+    .collection(COLLECTIONS.STOCK_BASELINES)
+    .findOne({ _id: new ObjectId(anchorId) } as any);
+  if (!anchor) {
+    console.error(
+      "Stock baseline anchor full doc not found (deleted/expired?) for baseId:",
+      anchorId,
+    );
+    return null;
+  }
+
+  const diffs = await db
+    .collection(COLLECTIONS.STOCK_BASELINES)
+    .find({
+      type: "diff",
+      baseId: anchorId,
+      capturedAt: { $lte: latestDoc.capturedAt },
+    } as any)
+    .sort({ capturedAt: 1 })
+    .toArray();
+
+  const state = new Map<string, Map<string, StockBaselineBin>>();
+  for (const item of anchor.stockData?.items || []) {
+    const bins = new Map<string, StockBaselineBin>();
+    for (const bin of item.binQuantities?.bins || []) bins.set(bin.binId, bin);
+    state.set(item.stockItemId, bins);
+  }
+
+  for (const diff of diffs) {
+    for (const changedItem of diff.changedItems || []) {
+      let bins = state.get(changedItem.stockItemId);
+      if (!bins) {
+        bins = new Map();
+        state.set(changedItem.stockItemId, bins);
+      }
+      for (const bin of changedItem.bins) {
+        if ((bin as any).removed) bins.delete(bin.binId);
+        else bins.set(bin.binId, bin as StockBaselineBin);
+      }
+    }
+    for (const removedId of diff.removedItemIds || []) {
+      state.delete(removedId);
+    }
+  }
+
+  const items: StockBaselineItem[] = Array.from(state.entries()).map(
+    ([stockItemId, bins]) => ({
+      stockItemId,
+      binQuantities: { bins: Array.from(bins.values()) },
+    }),
+  );
+
+  return { items, capturedAt: latestDoc.capturedAt };
+}
+
+export async function captureStockBaseline(db: Db): Promise<void> {
   try {
+    // captureStockBaseline() runs unconditionally at the top of runArchive(),
+    // which is invoked both by the daily fresh-run cron AND by
+    // resumeIncompleteArchives() (fired every 5 minutes, retrying up to 5x
+    // per tick during a backlog). Skip the Sanity fetch entirely (not just
+    // the insert) if today is already captured, so a no-op resume tick
+    // costs nothing.
+    const captureDay = new Date().toISOString().slice(0, 10); // UTC "YYYY-MM-DD"
+    const now = new Date();
+    const latest = await db
+      .collection(COLLECTIONS.STOCK_BASELINES)
+      .findOne({}, { sort: { capturedAt: -1 } });
+    if (latest?.captureDay === captureDay) {
+      return;
+    }
+
     const registry = await sanityClient.fetch(
       groq`*[_type == "stockRegistry"][0]{ stockData, lastUpdated }`,
     );
@@ -712,13 +909,89 @@ async function captureStockBaseline(db: Db): Promise<void> {
       // console.log("⚠️  No stockRegistry found — skipping baseline capture");
       return;
     }
+    const currentItems: StockBaselineItem[] = registry.stockData.items || [];
 
-    await db.collection(COLLECTIONS.STOCK_BASELINES).insertOne({
-      capturedAt: new Date().toISOString(),
-      cutoffDate: getArchiveCutoffDate(),
-      stockData: registry.stockData,
-      lastRegistryUpdate: registry.lastUpdated,
-    });
+    // Decide full vs. diff by the anchor's wall-clock age, not a diff-count
+    // — this self-heals correctly if the cron has a multi-day gap (jumps
+    // straight to a fresh full on next run, however late, rather than
+    // drifting based on how many diffs happened to accumulate).
+    let anchorFullDoc: any = null;
+    if (latest) {
+      const anchorId =
+        latest.type === "diff" ? latest.baseId : latest._id?.toString();
+      if (anchorId) {
+        anchorFullDoc = await db
+          .collection(COLLECTIONS.STOCK_BASELINES)
+          .findOne({ _id: new ObjectId(anchorId) } as any);
+      }
+    }
+
+    const anchorAgeMs = anchorFullDoc
+      ? now.getTime() - new Date(anchorFullDoc.capturedAt).getTime()
+      : Infinity;
+    const needsFull =
+      !latest || !anchorFullDoc || anchorAgeMs >= STOCK_BASELINE_FULL_INTERVAL_MS;
+
+    let doc: any;
+    if (needsFull) {
+      doc = {
+        type: "full",
+        captureDay,
+        capturedAt: now,
+        cutoffDate: getArchiveCutoffDate(),
+        lastRegistryUpdate: registry.lastUpdated ?? null,
+        stockData: { items: currentItems },
+      };
+    } else {
+      let reconstructed: { items: StockBaselineItem[] } | null = null;
+      try {
+        reconstructed = await reconstructStockBaselineChain(db, latest);
+      } catch (err) {
+        console.error(
+          "Stock baseline reconstruction failed during capture, falling back to full snapshot:",
+          err,
+        );
+      }
+
+      if (!reconstructed) {
+        // Self-heal: can't safely diff without a known-good previous state
+        // (orphaned/corrupted chain — e.g. the anchor expired or was
+        // cleaned up while a diff on top of it survived).
+        doc = {
+          type: "full",
+          captureDay,
+          capturedAt: now,
+          cutoffDate: getArchiveCutoffDate(),
+          lastRegistryUpdate: registry.lastUpdated ?? null,
+          stockData: { items: currentItems },
+        };
+      } else {
+        const { changedItems, removedItemIds } = computeStockBaselineDiff(
+          reconstructed.items,
+          currentItems,
+        );
+        doc = {
+          type: "diff",
+          captureDay,
+          capturedAt: now,
+          cutoffDate: getArchiveCutoffDate(),
+          lastRegistryUpdate: registry.lastUpdated ?? null,
+          baseId: anchorFullDoc._id.toString(),
+          changedItems,
+          removedItemIds,
+        };
+      }
+    }
+
+    try {
+      await db.collection(COLLECTIONS.STOCK_BASELINES).insertOne(doc);
+    } catch (err: any) {
+      // Lost a race to another concurrent invocation that captured
+      // captureDay first (the findOne check above is only an optimization;
+      // the unique+sparse index on captureDay is the real guarantee) —
+      // expected under overlapping resume ticks, not an error.
+      if (err?.code !== 11000) throw err;
+    }
 
     // console.log("📸 Stock baseline captured before archival");
   } catch (err) {
@@ -1250,7 +1523,7 @@ async function archiveStockSnapshots(
 // already exist" — which is frequently false (auth issues, conflicting
 // index options, bad field paths, timeouts all land here too) and gave no
 // way to tell which index, or how many, actually failed.
-async function ensureIndexes(
+export async function ensureIndexes(
   db: Db,
 ): Promise<{ created: number; failed: { spec: string; error: string }[] }> {
   const indexSpecs: {
@@ -1336,6 +1609,34 @@ async function ensureIndexes(
       options: { unique: true },
     },
     { collection: COLLECTIONS.STOCK_BASELINES, spec: { capturedAt: -1 } },
+    // sparse: true is required, not optional — legacy docs captured before
+    // this index existed (and any reinserted later via an old encrypted
+    // backup restore through /api/archive/import) have no captureDay field
+    // at all. A non-sparse unique index treats a missing field as null for
+    // uniqueness purposes, so a second such doc would collide with E11000.
+    {
+      collection: COLLECTIONS.STOCK_BASELINES,
+      spec: { captureDay: 1 },
+      options: { unique: true, sparse: true },
+    },
+    {
+      collection: COLLECTIONS.STOCK_BASELINES,
+      spec: { capturedAt: 1 },
+      options: {
+        // 30-day retention, comfortably longer than the 7-day full-snapshot
+        // interval (STOCK_BASELINE_FULL_INTERVAL_MS) so a live reconstruction
+        // chain's anchor is never at risk of expiring before every diff
+        // built on top of it has also aged out. A separate ascending index
+        // from the existing descending one above — TTL semantics need their
+        // own index, and this leaves the original sort-optimized index
+        // untouched. NOTE: TTL indexes only expire documents where the
+        // indexed field is a genuine BSON Date; legacy docs with a string
+        // `capturedAt` (pre-dating this migration, or reintroduced via an
+        // old encrypted backup restore) are silently never expired by this
+        // index — a known, accepted gap.
+        expireAfterSeconds: 30 * 24 * 60 * 60,
+      },
+    },
   ];
 
   let created = 0;
@@ -1384,11 +1685,17 @@ export async function cleanupOldArchiveMetadata(): Promise<{
 
   const deletedRunsResult = await db
     .collection(COLLECTIONS.ARCHIVE_RUNS)
-    .deleteMany({ startedAt: { $lt: cutoff } });
+    .deleteMany({ startedAt: { $lt: cutoff } }); // startedAt is string-typed — stays a string comparison
 
+  // capturedAt is a BSON Date (was a string) — MongoDB comparison operators
+  // are BSON-type-sensitive, so `$lt` against the string `cutoff` above
+  // would silently match zero Date-typed documents. This is also mostly
+  // superseded by the TTL index in ensureIndexes() (which expires these
+  // automatically at the DB level), but kept as a redundant safety net for
+  // the manual "Delete Old Archived Sanity Data" admin action.
   const deletedBaselinesResult = await db
     .collection(COLLECTIONS.STOCK_BASELINES)
-    .deleteMany({ capturedAt: { $lt: cutoff } });
+    .deleteMany({ capturedAt: { $lt: new Date(cutoff) } });
 
   return {
     deletedRuns: deletedRunsResult.deletedCount || 0,
