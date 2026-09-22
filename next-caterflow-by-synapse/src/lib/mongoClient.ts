@@ -45,7 +45,6 @@ const mongoOptions: MongoClientOptions = {
 };
 
 // Global singleton to reuse across serverless function invocations
-let client: MongoClient | null = null;
 let clientPromise: Promise<MongoClient> | null = null;
 
 declare global {
@@ -53,25 +52,28 @@ declare global {
     var _mongoClientPromise: Promise<MongoClient> | undefined;
 }
 
+function createClientPromise(): Promise<MongoClient> {
+    const newClient = new MongoClient(uri, mongoOptions);
+    const promise = newClient.connect();
+    // A connect() failure before anything awaits this promise (e.g. a
+    // cold start hitting a struggling Atlas cluster) is otherwise an
+    // unhandled rejection, which crashes the whole process rather
+    // than just failing the one request. This no-op catch marks the
+    // promise as handled without swallowing the error for real
+    // consumers — getArchiveDb() still awaits the promise and throws
+    // normally.
+    promise.catch(() => { });
+    return promise;
+}
+
 if (uri) {
     if (process.env.NODE_ENV === 'development') {
         if (!global._mongoClientPromise) {
-            client = new MongoClient(uri, mongoOptions);
-            global._mongoClientPromise = client.connect();
-            // A connect() failure before anything awaits this promise (e.g. a
-            // cold start hitting a struggling Atlas cluster) is otherwise an
-            // unhandled rejection, which crashes the whole process rather
-            // than just failing the one request. This no-op catch marks the
-            // promise as handled without swallowing the error for real
-            // consumers — getArchiveDb() still awaits clientPromise and
-            // throws normally.
-            global._mongoClientPromise.catch(() => { });
+            global._mongoClientPromise = createClientPromise();
         }
-        clientPromise = global._mongoClientPromise!;
+        clientPromise = global._mongoClientPromise;
     } else {
-        client = new MongoClient(uri, mongoOptions);
-        clientPromise = client.connect();
-        clientPromise.catch(() => { });
+        clientPromise = createClientPromise();
     }
 }
 
@@ -81,11 +83,32 @@ export default clientPromise;
  * Get the archive database instance
  */
 export async function getArchiveDb(): Promise<Db> {
-    if (!uri || !clientPromise) {
+    if (!uri) {
         throw new Error('Please define the MONGODB_URI environment variable');
     }
-    const mongoClient = await clientPromise;
-    return mongoClient.db(dbName);
+    if (!clientPromise) {
+        clientPromise = createClientPromise();
+        if (process.env.NODE_ENV === 'development') global._mongoClientPromise = clientPromise;
+    }
+    try {
+        const mongoClient = await clientPromise;
+        return mongoClient.db(dbName);
+    } catch (err) {
+        // Without this, a single transient connect() failure (cold start
+        // hitting a slow/overloaded Atlas cluster) permanently poisons this
+        // module for the rest of this serverless container's warm lifetime:
+        // clientPromise stays rejected forever, so every subsequent call
+        // just replays the SAME original error instead of retrying —
+        // confirmed directly against production (POST /api/archive/lock/
+        // clear kept returning an identical cached "Socket 'secureConnect'
+        // timed out after 126366ms" on every call, while a sibling route's
+        // own container connected fine). Dropping the cached promise here
+        // means the NEXT call gets a fresh connection attempt instead of
+        // an instant, permanent failure.
+        clientPromise = null;
+        if (process.env.NODE_ENV === 'development') global._mongoClientPromise = undefined;
+        throw err;
+    }
 }
 
 /**
