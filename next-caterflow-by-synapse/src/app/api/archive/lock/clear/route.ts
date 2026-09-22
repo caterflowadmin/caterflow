@@ -28,28 +28,40 @@ export async function POST(request: Request) {
 
   try {
     const db = await getArchiveDb();
-    const progressId = "archive-progress";
-    // Force the progress singleton back to a resolved state so
-    // archiveInProgress flips false and a new run can be started.
-    // (Previously this wrote to an "archive-lock" doc that nothing
-    // else in the system ever read, so it was a no-op.)
-    await db.collection(COLLECTIONS.ARCHIVE_RUNS).updateOne(
-      { _id: progressId } as any,
-      {
-        $set: {
-          status: "failed",
-          currentStep: null,
-          completedAt: new Date().toISOString(),
-          lastUpdatedAt: new Date().toISOString(),
-        },
-        $push: {
-          progressMessages: "Archive lock manually cleared by admin",
-        },
-      } as any,
-      { upsert: true },
-    );
+    const { searchParams } = new URL(request.url);
+    // "archive" (default) and "cleanup" are two DISTINCT lock singletons —
+    // the archive-run engine's _id: "archive-progress" and the cleanup
+    // engine's _id: "cleanup-progress" (see archiveService.ts). This
+    // endpoint used to only ever clear "archive-progress", so a stuck
+    // cleanup lock (the one archiveQueries.ts's getRecentArchiveRuns filter
+    // and archiveService.ts's cleanupArchivedSanityData write) silently
+    // survived a "clear" call that still returned success: true.
+    const target = searchParams.get("target") || "archive";
+    const targets =
+      target === "all" ? ["archive", "cleanup"] : [target];
 
-    return NextResponse.json({ success: true });
+    const cleared: string[] = [];
+    for (const t of targets) {
+      const progressId = t === "cleanup" ? "cleanup-progress" : "archive-progress";
+      await db.collection(COLLECTIONS.ARCHIVE_RUNS).updateOne(
+        { _id: progressId } as any,
+        {
+          $set: {
+            status: "failed",
+            currentStep: null,
+            completedAt: new Date().toISOString(),
+            lastUpdatedAt: new Date().toISOString(),
+          },
+          $push: {
+            progressMessages: `${t === "cleanup" ? "Cleanup" : "Archive"} lock manually cleared by admin`,
+          },
+        } as any,
+        { upsert: true },
+      );
+      cleared.push(progressId);
+    }
+
+    return NextResponse.json({ success: true, cleared });
   } catch (err: any) {
     console.error("Failed to clear archive lock:", err);
     return NextResponse.json(
