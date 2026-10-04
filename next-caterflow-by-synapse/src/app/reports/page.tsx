@@ -120,6 +120,15 @@ import {
   isDateWithinRange,
 } from "@/lib/dateRangeUtils";
 import { VAT_CONFIG } from "@/lib/vatConfig";
+import FinancialSummary from "./FinancialSummary";
+import {
+  computeFinancials,
+  dispatchSales,
+  isEffectiveCount,
+  isEffectiveDispatch,
+  isEffectiveReceipt,
+  type IntegrityIssue,
+} from "@/lib/financialReport";
 
 // Removed: unused filterTransitionStyle, filterLoadingStyle, useChartReady hook
 
@@ -394,6 +403,17 @@ interface EnhancedAnalyticsData {
     netVATPayable: number;
     grossProfitBeforeVAT: number;
     grossProfitAfterVAT: number;
+    // Data-quality findings produced by computeFinancials()
+    netTransfers?: number;
+    integrity?: IntegrityIssue[];
+    excluded?: {
+      receipts: number;
+      receiptsValue: number;
+      dispatches: number;
+      dispatchesCost: number;
+      binCounts: number;
+      transfers: number;
+    };
   };
   suppliers: {
     performance: Array<{
@@ -709,43 +729,6 @@ const filterDataBySite = <T extends any[]>(
   }) as T;
 };
 
-// Net value effect of internal transfers on a single site's stock value.
-// A transfer INTO the filtered site is a value inflow (like a receipt);
-// a transfer OUT of the filtered site is a value outflow (like a dispatch).
-// Transfers between two bins of the SAME filtered site (or when no specific
-// site is selected) net to zero, since the stock never leaves the scope
-// being valued. Transfers are valued at the stock item's current unitPrice,
-// consistent with how bin-count variances are valued elsewhere in this file.
-const computeNetTransferValue = (
-  transfers: any[],
-  filterSiteId: string | null | undefined,
-): number => {
-  if (!filterSiteId || filterSiteId === "all" || !Array.isArray(transfers)) {
-    return 0;
-  }
-
-  return transfers.reduce((sum: number, t: any) => {
-    const fromSiteId = t.fromBin?.site?._id || t.fromBin?.site;
-    const toSiteId = t.toBin?.site?._id || t.toBin?.site;
-    const isInflow = toSiteId === filterSiteId;
-    const isOutflow = fromSiteId === filterSiteId;
-
-    // Same-site bin-to-bin transfer (or a transfer touching neither side,
-    // which shouldn't occur since the caller already filtered by site) —
-    // no net value change for this site.
-    if (isInflow === isOutflow) return sum;
-
-    const items = t.items || t.transferredItems || [];
-    const transferValue = items.reduce((itemSum: number, item: any) => {
-      const qty = Number(item.transferredQuantity || 0);
-      const unitPrice = Number(item.stockItem?.unitPrice || 0);
-      return itemSum + qty * unitPrice;
-    }, 0);
-
-    return sum + (isInflow ? transferValue : -transferValue);
-  }, 0);
-};
-
 // Chart color schemes
 const CHART_COLORS = {
   primary: ["#3182CE", "#63B3ED", "#90CDF4", "#BEE3F8"],
@@ -869,7 +852,6 @@ export default function ComprehensiveReportsPage() {
   });
   const [compareMode, setCompareMode] = useState(false);
 
-  const [calculatingOpeningStock, setCalculatingOpeningStock] = useState(false);
 
   const toast = useToast();
 
@@ -1077,9 +1059,7 @@ export default function ComprehensiveReportsPage() {
         const itemsWithVAT =
           po.orderedItems?.map((item: any) => {
             // DEFENSIVE: Check if VAT field exists
-            const isVATApplicable =
-              item.stockItem?.isVATApplicable !== false &&
-              item.stockItem?.isVATApplicable !== undefined;
+            const isVATApplicable = item.stockItem?.isVATApplicable !== false;
             const itemTotal =
               (item.orderedQuantity || 0) *
               resolveUnitPrice(item.unitPrice, item.stockItem?.unitPrice);
@@ -1174,11 +1154,12 @@ export default function ComprehensiveReportsPage() {
           };
         }) || [];
 
-      // Calculate VAT on sales - get selling price from dispatchType
-      const sellingPrice =
-        dispatch.dispatchType?.sellingPrice || dispatch.sellingPrice || 0;
-      const peopleFed = dispatch.peopleFed || 0;
-      const totalSales = sellingPrice * peopleFed;
+      // Sales: keep the figure stored on the dispatch. Only when there is none
+      // fall back to the stamped / site-specific / base price (see
+      // dispatchSales). The old code always recomputed from the type's base
+      // price, which ignored site pricing and rewrote history whenever a
+      // price changed.
+      const totalSales = dispatchSales(dispatch);
       const salesVAT = VAT_CONFIG.calculateVAT(totalSales, true).vatAmount;
       const salesWithVAT = totalSales + salesVAT;
 
@@ -1273,300 +1254,6 @@ export default function ComprehensiveReportsPage() {
     [dateRangeMemo, toast],
   );
 
-  // ========== CORRECTED: Manual opening stock helper ==========
-  // Uses standard inventory accounting: opening = currentStock − receipts_after + dispatches_after
-  // i.e. unwind future receipts (additions) and re-add future dispatches (subtractions)
-  const calculateManualOpeningStock = useCallback(
-    (
-      targetDate: Date,
-      currentStockItems: any[],
-      allGoodsReceipts: any[],
-      allDispatches: any[],
-    ): number => {
-      try {
-        console.log(
-          "🧮 Calculating manual opening stock for:",
-          targetDate.toDateString(),
-        );
-
-        // Transactions that happened AFTER targetDate (need to be unwound)
-        const receiptsAfterDate = allGoodsReceipts.filter((gr) => {
-          try {
-            return new Date(gr.receiptDate) > targetDate;
-          } catch {
-            return false;
-          }
-        });
-
-        const dispatchesAfterDate = allDispatches.filter((d) => {
-          try {
-            return new Date(d.dispatchDate) > targetDate;
-          } catch {
-            return false;
-          }
-        });
-
-        const itemBalances: { [itemId: string]: number } = {};
-
-        // Baseline = current stock
-        currentStockItems.forEach((item) => {
-          if (item?._id) {
-            itemBalances[item._id] = item.currentStock || 0;
-          }
-        });
-
-        // Unwind receipts that came AFTER targetDate (subtract them from current)
-        receiptsAfterDate.forEach((receipt) => {
-          receipt.receivedItems?.forEach((item: any) => {
-            const id = item.stockItem?._id;
-            const qty = item.receivedQuantity || 0;
-            if (id && qty > 0) {
-              itemBalances[id] = (itemBalances[id] || 0) - qty; // ✅ subtract
-            }
-          });
-        });
-
-        // Re-add dispatches that happened AFTER targetDate (add back consumed qty)
-        dispatchesAfterDate.forEach((dispatch) => {
-          dispatch.dispatchedItems?.forEach((item: any) => {
-            const id = item.stockItem?._id;
-            const qty = item.dispatchedQuantity || 0;
-            if (id && qty > 0) {
-              itemBalances[id] = (itemBalances[id] || 0) + qty; // ✅ add back
-            }
-          });
-        });
-
-        // Aggregate monetary value
-        let totalStockValue = 0;
-        currentStockItems.forEach((item) => {
-          const balance = Math.max(0, itemBalances[item._id] || 0);
-          totalStockValue += balance * (item.unitPrice || 0);
-        });
-
-        console.log("💰 Manual opening stock:", totalStockValue);
-        return totalStockValue;
-      } catch (error) {
-        console.error("❌ Error in manual opening stock:", error);
-        return 0;
-      }
-    },
-    [],
-  );
-
-  // ========== FIXED: Opening stock calculation ==========
-  // Standard formula: opening = Σ(receipts before date) − Σ(dispatches before date)
-  // Optional inventoryCounts map lets a physical count override the computed baseline.
-  const calculateOpeningStockForDate = useCallback(
-    async (
-      targetDate: Date,
-      allGoodsReceipts: any[],
-      allDispatches: any[],
-      // Optional: { `${stockItemId}`: countedQuantity } – from a physical inventory count
-      inventoryCounts?: Record<string, number>,
-      allTransfers?: any[],
-      filterSiteId?: string | null,
-    ): Promise<number> => {
-      console.log(
-        "💰 CALCULATING OPENING STOCK FOR:",
-        targetDate.toISOString().split("T")[0],
-      );
-      console.log("📦 Raw receipts count:", allGoodsReceipts.length);
-      console.log("🚚 Raw dispatches count:", allDispatches.length);
-
-      try {
-        // ========== 1. FILTER TRANSACTIONS STRICTLY BEFORE TARGET DATE ==========
-        // targetDate is the reporting period's start (see the call site:
-        // calculateOpeningStockForDate(dateRange.start, ...)), and
-        // periodGoodsReceipts/periodDispatches (computed separately by the
-        // caller via filterDataByDateRange) already INCLUDE anything dated
-        // exactly at dateRange.start. Using `<=` here would double-count
-        // same-instant records in both "opening stock" and "period
-        // purchases/consumption" — must be strictly `<` so opening stock
-        // reflects the balance BEFORE the period, not including its first
-        // instant.
-        const receiptsBeforeDate = allGoodsReceipts.filter((gr) => {
-          try {
-            const receiptDate = new Date(gr.receiptDate);
-            return receiptDate < targetDate;
-          } catch {
-            return false;
-          }
-        });
-
-        const dispatchesBeforeDate = allDispatches.filter((d) => {
-          try {
-            const dispatchDate = new Date(d.dispatchDate);
-            return dispatchDate < targetDate;
-          } catch {
-            return false;
-          }
-        });
-
-        console.log(
-          `📦 Transactions BEFORE ${targetDate.toISOString().split("T")[0]}:`,
-        );
-        console.log(`  - Receipts BEFORE: ${receiptsBeforeDate.length}`);
-        console.log(`  - Dispatches BEFORE: ${dispatchesBeforeDate.length}`);
-
-        // ========== 2. DETAILED RECEIPT BREAKDOWN ==========
-        console.log("\n🔍 DETAILED RECEIPT BREAKDOWN:");
-        let receiptNumber = 1;
-        let receiptsValueBefore = 0;
-
-        for (const gr of receiptsBeforeDate) {
-          let receiptValue = 0;
-          const items = gr.receivedItems || [];
-
-          console.log(
-            `  ${receiptNumber}. ${gr.receiptNumber} (${gr.receiptDate}):`,
-          );
-
-          for (const item of items) {
-            const unitPrice = resolveUnitPrice(
-              item.unitPrice,
-              item.stockItem?.unitPrice,
-            );
-            const quantity = item.receivedQuantity || 0;
-            const val = quantity * unitPrice;
-            const itemName = item.stockItem?.name || "Unknown Item";
-
-            console.log(
-              `     - ${itemName}: ${quantity} × ${unitPrice.toFixed(2)} = ${val.toFixed(2)}`,
-            );
-            receiptValue += val;
-          }
-
-          console.log(`     SUBTOTAL: ${receiptValue.toFixed(2)}`);
-          receiptsValueBefore += receiptValue;
-          receiptNumber++;
-        }
-
-        // ========== 3. DETAILED DISPATCH BREAKDOWN ==========
-        console.log("\n🔍 DETAILED DISPATCH BREAKDOWN:");
-        let dispatchNumber = 1;
-        let dispatchesValueBefore = 0;
-
-        for (const d of dispatchesBeforeDate) {
-          const dispatchCostField = Number(d.totalCost || 0);
-          const itemCostSum = (d.dispatchedItems || []).reduce(
-            (itemSum: number, item: any) => {
-              const qty = Number(item.dispatchedQuantity || 0);
-              const unitPrice = resolveUnitPrice(
-                item.unitPrice,
-                item.stockItem?.unitPrice,
-              );
-              const itemCost = Number(item.totalCost || 0) || qty * unitPrice;
-              return itemSum + itemCost;
-            },
-            0,
-          );
-
-          // Prefer stored dispatch totalCost as source-of-truth, fallback to item cost sum
-          const dispatchValue =
-            dispatchCostField > 0 ? dispatchCostField : itemCostSum;
-
-          if (
-            dispatchCostField > 0 &&
-            Math.abs(dispatchCostField - itemCostSum) > 0.01
-          ) {
-            console.warn(
-              `⚠️ Dispatch ${d.dispatchNumber} cost mismatch: stored=${dispatchCostField.toFixed(2)}, itemSum=${itemCostSum.toFixed(2)}`,
-            );
-          }
-
-          console.log(
-            `  ${dispatchNumber}. ${d.dispatchNumber} (${d.dispatchDate}):`,
-          );
-          (d.dispatchedItems || []).forEach((item: any) => {
-            const itemName = item.stockItem?.name || "Unknown Item";
-            const qty = item.dispatchedQuantity || 0;
-            const unitPrice = resolveUnitPrice(
-              item.unitPrice,
-              item.stockItem?.unitPrice,
-            );
-            const itemCost = Number(item.totalCost || 0) || qty * unitPrice;
-            const displayPrice = qty > 0 ? itemCost / qty : unitPrice;
-            console.log(
-              `     - ${itemName}: ${qty} × ${displayPrice.toFixed(2)} = ${itemCost.toFixed(2)}`,
-            );
-          });
-
-          console.log(`     SUBTOTAL: ${dispatchValue.toFixed(2)}`);
-          dispatchesValueBefore += dispatchValue;
-          dispatchNumber++;
-        }
-
-        // ========== 4. SUMMARY OF VALUES ==========
-        console.log("\n💰 Transaction values BEFORE date:", {
-          receiptsValueBefore: receiptsValueBefore.toFixed(2),
-          dispatchesValueBefore: dispatchesValueBefore.toFixed(2),
-          netValue: (receiptsValueBefore - dispatchesValueBefore).toFixed(2),
-        });
-
-        // ========== 5. INVENTORY COUNT OVERRIDE ==========
-        // If a physical count was provided for the period, use it as the
-        // authoritative baseline rather than the computed movement total.
-        if (inventoryCounts && Object.keys(inventoryCounts).length > 0) {
-          const countBaseline = Object.values(inventoryCounts).reduce(
-            (s, v) => s + v,
-            0,
-          );
-          console.log(
-            "📋 Using inventory count baseline:",
-            countBaseline.toFixed(2),
-          );
-          return Math.max(0, countBaseline);
-        }
-
-        // ========== 6. STANDARD FORMULA ==========
-        // opening = receipts_before − dispatches_before ± net transfers in/out
-        // of the filtered site before the target date (transfers only move
-        // stock between bins/sites — they must be included so a single
-        // site's opening value reflects stock actually transferred in/out,
-        // not just what it purchased/dispatched directly).
-        const transfersBeforeDate = (allTransfers || []).filter((t: any) => {
-          try {
-            return new Date(t.transferDate) <= targetDate;
-          } catch {
-            return false;
-          }
-        });
-        const netTransferValueBefore = computeNetTransferValue(
-          transfersBeforeDate,
-          filterSiteId,
-        );
-        if (netTransferValueBefore !== 0) {
-          console.log(
-            "🔁 Net transfer value before date (site-scoped):",
-            netTransferValueBefore.toFixed(2),
-          );
-        }
-
-        const openingStock =
-          receiptsValueBefore - dispatchesValueBefore + netTransferValueBefore;
-
-        console.log("✅ FINAL Opening stock:", {
-          receiptsBeforeValue: receiptsValueBefore.toFixed(2),
-          dispatchesBeforeValue: dispatchesValueBefore.toFixed(2),
-          openingStock: openingStock.toFixed(2),
-        });
-
-        if (openingStock < 0) {
-          console.warn(
-            "⚠️ Opening stock is negative – check for missing receipts or cross-site dispatches.",
-          );
-        }
-
-        return Math.max(0, openingStock);
-      } catch (error) {
-        console.error("❌ Error in opening stock:", error);
-        return 0;
-      }
-    },
-    [],
-  );
-
   // ========== CORRECTED PROCESS ANALYTICS DATA ==========
   const processAnalyticsData = useCallback(
     async (
@@ -1607,196 +1294,49 @@ export default function ComprehensiveReportsPage() {
         const periodPOs = filterDataByDateRange(purchaseOrders, "orderDate");
 
         // USE FILTERED DATA IF PROVIDED, OTHERWISE USE RAW DATA
+        // Only documents that actually moved stock feed the report (see
+        // isEffective* in lib/financialReport).
         const periodGoodsReceipts = filterDataByDateRange(
-          filteredGoodsReceipts || goodsReceipts,
+          (filteredGoodsReceipts || goodsReceipts).filter(isEffectiveReceipt),
           "receiptDate",
         );
         const periodDispatches = filterDataByDateRange(
-          filteredDispatches || dispatches,
+          (filteredDispatches || dispatches).filter(isEffectiveDispatch),
           "dispatchDate",
         );
-        const periodBinCounts = filterDataByDateRange(binCounts, "countDate");
+        const periodBinCounts = filterDataByDateRange(
+          binCounts.filter(isEffectiveCount),
+          "countDate",
+        );
 
-        // 1. Build inventory-counts baseline from physical counts done on or before the period start.
-        //    This lets a recent bin-count reset the opening-stock figure rather than relying
-        //    purely on movement history, which may have gaps.
-        const inventoryCountsMap: Record<string, number> = {};
-        if (binCounts && binCounts.length > 0) {
-          // Get all counts that fall on or before the period start date
-          const countsBeforeStart = binCounts.filter((count: any) => {
-            try {
-              return new Date(count.countDate) <= dateRange.start;
-            } catch {
-              return false;
-            }
-          });
-
-          // Sort descending so the MOST RECENT count comes first
-          countsBeforeStart.sort(
-            (a: any, b: any) =>
-              new Date(b.countDate).getTime() - new Date(a.countDate).getTime(),
-          );
-
-          countsBeforeStart.forEach((count: any) => {
-            count.countedItems?.forEach((item: any) => {
-              const itemId = item.stockItem?._id;
-              const unitPrice =
-                item.stockItem?.unitPrice || item.unitPrice || 0;
-              const countedQty =
-                item.countedQuantity ?? item.physicalCount ?? 0;
-              // Only record the first (most recent) count found for each item
-              if (itemId && !(itemId in inventoryCountsMap)) {
-                inventoryCountsMap[itemId] = countedQty * unitPrice;
-              }
-            });
-          });
-
-          if (Object.keys(inventoryCountsMap).length > 0) {
-            console.log(
-              `📋 Found ${Object.keys(inventoryCountsMap).length} items with physical counts before period start`,
-            );
-          }
-        }
-
-        // 2. Calculate opening stock — physical count baseline takes priority
-        setCalculatingOpeningStock(true);
-
-        const openingStockValue = await calculateOpeningStockForDate(
-          dateRange.start,
-          filteredGoodsReceipts || goodsReceipts,
-          filteredDispatches || dispatches,
-          Object.keys(inventoryCountsMap).length > 0
-            ? inventoryCountsMap
-            : undefined,
+        // 1. Effective documents only: drafts, cancelled and unfinished
+        //    receipts/dispatches never moved stock, so they are not income,
+        //    cost or input VAT. computeFinancials() is a single, unit-tested
+        //    ledger: opening = everything before the period, so opening stock
+        //    always equals the previous period's closing stock.
+        const fin = computeFinancials({
+          receipts: filteredGoodsReceipts || goodsReceipts,
+          dispatches: filteredDispatches || dispatches,
+          counts: binCounts,
           transfers,
-          filterSiteId,
-        );
+          range: dateRange,
+          siteId: filterSiteId,
+          liveInventoryValue: stockValues?.summary?.totalInventoryValue,
+        });
 
-        setCalculatingOpeningStock(false);
-
-        // 2. PERIOD PURCHASES = Goods receipts in the period
-        const periodPurchasesExclVAT = periodGoodsReceipts.reduce(
-          (sum: number, gr: any) => {
-            const receiptValue =
-              gr.receivedItems?.reduce((itemSum: number, item: any) => {
-                const unitPrice =
-                  item.unitPrice || item.stockItem?.unitPrice || 0;
-                const receivedQuantity = item.receivedQuantity || 0;
-                return itemSum + receivedQuantity * unitPrice;
-              }, 0) || 0;
-            return sum + receiptValue;
-          },
-          0,
-        );
-
-        // 3. PERIOD CONSUMPTION = Dispatch costs in the period (PREFER STORED totalCost)
-        const periodDispatchesTotalCost = periodDispatches.reduce(
-          (sum: number, d: any) => sum + (Number(d.totalCost) || 0),
-          0,
-        );
-
-        const periodDispatchesCostFromItems = periodDispatches.reduce(
-          (sum: number, d: any) => {
-            const itemCost =
-              d.dispatchedItems?.reduce((itemSum: number, item: any) => {
-                const itemCostExclVAT =
-                  Number(item.totalCost) ||
-                  Number(item.dispatchedQuantity || 0) *
-                    Number(item.unitPrice || 0);
-                return itemSum + itemCostExclVAT;
-              }, 0) || 0;
-            return sum + itemCost;
-          },
-          0,
-        );
-
-        if (
-          Math.abs(periodDispatchesTotalCost - periodDispatchesCostFromItems) >
-          0.01
-        ) {
-          console.warn(
-            `⚠️ Period dispatch cost mismatch: stored=${periodDispatchesTotalCost.toFixed(
-              2,
-            )}, items=${periodDispatchesCostFromItems.toFixed(2)}`,
-          );
-        }
-
-        const periodConsumptionExclVAT = periodDispatchesTotalCost;
-
-        // 4. SALES = Prefer stored totalSales, fallback to people fed × selling price
-        const periodSalesExclVAT = periodDispatches.reduce(
-          (sum: number, d: any) => {
-            const storedSales = Number(d.totalSales || 0);
-            if (storedSales > 0) {
-              return sum + storedSales;
-            }
-            const sellingPriceExclVAT =
-              Number(d.dispatchType?.sellingPrice) ||
-              Number(d.sellingPrice) ||
-              0;
-            const peopleFed = Number(d.peopleFed) || 0;
-            return sum + sellingPriceExclVAT * peopleFed;
-          },
-          0,
-        );
-
-        // 5. VAT calculations – single source of truth
-        // vatAmount on GR / PO is pre-computed by calculateGoodsReceiptVAT /
-        // calculatePurchaseOrderVAT. We sum ONLY vatAmount – NOT totalWithVAT –
-        // to avoid double-counting.
-        const vatOnPurchases = periodGoodsReceipts.reduce(
-          (sum: number, gr: any) => sum + (Number(gr.vatAmount) || 0),
-          0,
-        );
-
-        // For sales VAT: use pre-computed salesVAT field; fall back to rate × excl. amount.
-        const periodDispatchesSalesVAT = periodDispatches.reduce(
-          (sum: number, d: any) => sum + (Number(d.salesVAT) || 0),
-          0,
-        );
-        const vatOnSales =
-          periodDispatchesSalesVAT > 0
-            ? periodDispatchesSalesVAT
-            : Math.round(periodSalesExclVAT * VAT_CONFIG.rate * 100) / 100;
-
-        const netVATPayable = vatOnSales - vatOnPurchases;
-
-        // 6. PROFIT CALCULATIONS
-        const COGS = periodConsumptionExclVAT;
-        const grossProfitBeforeVAT = periodSalesExclVAT - COGS;
-
-        // 7. Calculate net variances from bin counts
-        const netVariancesValue = periodBinCounts.reduce(
-          (sum: number, count: any) =>
-            sum +
-            (count.countedItems?.reduce((itemSum: number, item: any) => {
-              const varianceValue =
-                (item.variance || 0) * (item.stockItem?.unitPrice || 0);
-              return itemSum + varianceValue;
-            }, 0) || 0),
-          0,
-        );
-
-        // 7b. Net transfer value in/out of the filtered site during the
-        // period itself (opening stock already accounts for transfers
-        // BEFORE the period start — this covers transfers that happened
-        // DURING it, same reasoning as periodPurchases/periodConsumption).
-        const periodTransfers = filterDataByDateRange(
-          transfers,
-          "transferDate",
-        );
-        const netTransferValuePeriod = computeNetTransferValue(
-          periodTransfers,
-          filterSiteId,
-        );
-
-        // 8. Calculate closing stock value
-        const closingStockValue =
-          openingStockValue +
-          periodPurchasesExclVAT -
-          periodConsumptionExclVAT +
-          netVariancesValue +
-          netTransferValuePeriod;
+        const openingStockValue = fin.openingStock;
+        const periodPurchasesExclVAT = fin.periodPurchases;
+        const periodDispatchesTotalCost = fin.periodConsumption;
+        const periodConsumptionExclVAT = fin.periodConsumption;
+        const periodSalesExclVAT = fin.periodSales;
+        const vatOnPurchases = fin.vatOnPurchases;
+        const periodDispatchesSalesVAT = fin.vatOnSales;
+        const vatOnSales = fin.vatOnSales;
+        const netVATPayable = fin.netVATPayable;
+        const COGS = fin.periodConsumption;
+        const grossProfitBeforeVAT = fin.grossProfit;
+        const netVariancesValue = fin.netVariances;
+        const closingStockValue = fin.closingStock;
 
         // 9. Net profit. periodSalesExclVAT and COGS are both already
         // VAT-exclusive, so grossProfitBeforeVAT never contained VAT in the
@@ -2301,6 +1841,9 @@ export default function ComprehensiveReportsPage() {
             netVATPayable,
             grossProfitBeforeVAT: grossProfitBeforeVAT,
             grossProfitAfterVAT: netProfit,
+            netTransfers: fin.netTransfers,
+            integrity: fin.integrity,
+            excluded: fin.excluded,
           },
           suppliers: {
             performance: supplierPerformance,
@@ -2351,7 +1894,7 @@ export default function ComprehensiveReportsPage() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filterDataByDateRange, calculateOpeningStockForDate, toast],
+    [filterDataByDateRange, toast],
   );
 
   // Add this helper function to get stock values filtered by site
@@ -5251,204 +4794,13 @@ export default function ComprehensiveReportsPage() {
                           {/* Financial Metrics - PERIOD-BASED CALCULATIONS WITH VAT */}
                           <Card>
                             <CardBody>
-                              <Heading size="md" mb={4}>
-                                Financial Performance (With VAT Accounting)
-                              </Heading>
-
-                              {/* Success message when we have accurate data */}
-                              <Alert status="success" mb={4} fontSize="sm">
-                                <AlertIcon />
-                                <Box>
-                                  <Text fontWeight="bold">
-                                    Accurate period accounting with VAT enabled
-                                  </Text>
-                                  <Text>
-                                    Eswatini VAT rate of{" "}
-                                    {VAT_CONFIG.ratePercentage}% applied to all
-                                    transactions
-                                  </Text>
-                                </Box>
-                              </Alert>
-
-                              <SimpleGrid
-                                columns={{ base: 1, md: 2, lg: 4 }}
-                                spacing={6}
-                              >
-                                <Stat>
-                                  <StatLabel>Opening Stock</StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.openingStock?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    As of{" "}
-                                    {format(
-                                      new Date(primaryDateRange.start),
-                                      "MMM dd, yyyy",
-                                    )}
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>Goods Received</StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.periodPurchases?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    {analyticsData?.summary.totalGoodsReceipts}{" "}
-                                    receipts
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>Dispatch Consumption</StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.periodConsumption?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    {analyticsData?.summary.totalDispatches}{" "}
-                                    dispatches
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>Stock Variances</StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.netVariances?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    {analyticsData?.summary.totalBinCounts}{" "}
-                                    counts
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>Closing Stock</StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.closingStockValue?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>Calculated value</StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>
-                                    Cost of Goods Sold (COGS)
-                                  </StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.periodConsumption?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    Actual consumption
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>Period Sales</StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.periodSales?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    {analyticsData?.summary.totalPeopleFed?.toLocaleString()}{" "}
-                                    people fed
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>VAT Payable</StatLabel>
-                                  <StatNumber
-                                    color={
-                                      analyticsData?.financial?.netVATPayable >=
-                                      0
-                                        ? "red.500"
-                                        : "green.500"
-                                    }
-                                  >
-                                    SZL{" "}
-                                    {Math.abs(
-                                      analyticsData?.financial?.netVATPayable ||
-                                        0,
-                                    ).toLocaleString()}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    {analyticsData?.financial?.netVATPayable >=
-                                    0
-                                      ? "Due"
-                                      : "Refund"}
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>Gross Profit</StatLabel>
-                                  <StatNumber
-                                    color={
-                                      analyticsData?.financial
-                                        ?.grossProfitAfterVAT >= 0
-                                        ? "green.500"
-                                        : "red.500"
-                                    }
-                                  >
-                                    SZL{" "}
-                                    {analyticsData?.financial?.grossProfitAfterVAT?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    {analyticsData?.financial?.profitPercentage?.toFixed(
-                                      1,
-                                    ) || "0"}
-                                    % margin
-                                  </StatHelpText>
-                                </Stat>
-                              </SimpleGrid>
-
-                              {/* Add calculation explanation with VAT */}
-                              <Box
-                                mt={4}
-                                p={3}
-                                borderRadius="md"
-                                border="1px"
-                                borderColor={CHART_COLORS.primary[0]}
-                                bg={"transparent"}
-                              >
-                                <Text fontSize="sm" fontWeight="medium">
-                                  Calculation Method (With VAT):
-                                </Text>
-                                <Text fontSize="sm">
-                                  • Opening Stock: Reconstructed from
-                                  transaction history
-                                </Text>
-                                <Text fontSize="sm">
-                                  • Goods Received: Actual receipts in period
-                                  (SZL{" "}
-                                  {analyticsData?.financial?.periodPurchases?.toLocaleString()}
-                                  )
-                                </Text>
-                                <Text fontSize="sm">
-                                  • Closing Stock: Calculated value (SZL{" "}
-                                  {analyticsData?.financial?.closingStockValue?.toLocaleString()}
-                                  )
-                                </Text>
-                                <Text fontSize="sm">
-                                  • COGS: Actual consumption (dispatched items
-                                  cost)
-                                </Text>
-                                <Text fontSize="sm">
-                                  • Gross Profit: Sales (excl. VAT) - COGS
-                                  (excl. VAT)
-                                </Text>
-                                <Text fontSize="sm">
-                                  • VAT Payable: tracked separately as a tax
-                                  liability — it is not deducted from profit
-                                </Text>
-                                <Text fontSize="sm">
-                                  • VAT Rate: {VAT_CONFIG.ratePercentage}%
-                                  (Eswatini Standard Rate)
-                                </Text>
-                              </Box>
+                              <FinancialSummary
+                                financial={analyticsData?.financial}
+                                summary={analyticsData?.summary}
+                                periodStart={primaryDateRange.start}
+                                periodEnd={primaryDateRange.end}
+                                vatRatePercentage={VAT_CONFIG.ratePercentage}
+                              />
                             </CardBody>
                           </Card>
 

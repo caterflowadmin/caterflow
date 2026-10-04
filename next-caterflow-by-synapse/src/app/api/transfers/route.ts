@@ -5,6 +5,7 @@ import { logSanityInteraction } from '@/lib/sanityLogger';
 import { updateStockForTransaction } from '@/lib/stockCalculations';
 import { getArchivedTransfers } from '@/lib/archiveQueries';
 import { getMaxSequenceNumber } from '@/lib/archiveService';
+import { mergeById } from '@/lib/financialReport';
 
 // Helper function to generate the next unique transfer number
 const getNextTransferNumber = async (): Promise<string> => {
@@ -92,7 +93,7 @@ export async function GET() {
         }
 
         // Merge and sort by transferDate descending
-        const merged = [...transfers, ...archivedTransfers].sort(
+        const merged = mergeById(transfers, archivedTransfers).sort(
             (a, b) => new Date(b.transferDate).getTime() - new Date(a.transferDate).getTime()
         );
 

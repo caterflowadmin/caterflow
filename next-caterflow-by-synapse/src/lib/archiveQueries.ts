@@ -5,6 +5,12 @@ import { getArchiveDb, COLLECTIONS } from "@/lib/mongoClient";
 import { reconstructStockBaselineChain } from "@/lib/archiveService";
 import type { Filter } from "mongodb";
 
+// MongoDB treats limit(0) as "no limit". These helpers feed the reports page,
+// which must see the COMPLETE history: opening stock is the running total of
+// everything before the period, so silently truncating the archive (it used to
+// be capped at the newest 500 documents) corrupts every financial figure.
+const ARCHIVE_NO_LIMIT = 0;
+
 // ─── Generic helpers ───────────────────────────────────────────────────────────
 
 /** Build a site filter for MongoDB queries based on user role */
@@ -38,7 +44,7 @@ export async function getArchivedDispatchLogs(options: {
     .find(siteFilter)
     .sort({ dispatchDate: -1 })
     .skip(options.skip || 0)
-    .limit(options.limit || 500)
+    .limit(options.limit ?? ARCHIVE_NO_LIMIT)
     .toArray();
 }
 
@@ -73,7 +79,7 @@ export async function getArchivedPurchaseOrders(options: {
     .find(filter)
     .sort({ orderDate: -1 })
     .skip(options.skip || 0)
-    .limit(options.limit || 500)
+    .limit(options.limit ?? ARCHIVE_NO_LIMIT)
     .toArray();
 }
 
@@ -111,7 +117,7 @@ export async function getArchivedGoodsReceipts(options: {
     .find(filter)
     .sort({ receiptDate: -1 })
     .skip(options.skip || 0)
-    .limit(options.limit || 500)
+    .limit(options.limit ?? ARCHIVE_NO_LIMIT)
     .toArray();
 }
 
@@ -142,7 +148,7 @@ export async function getArchivedBinCounts(options: {
     .find(siteFilter)
     .sort({ countDate: -1 })
     .skip(options.skip || 0)
-    .limit(options.limit || 500)
+    .limit(options.limit ?? ARCHIVE_NO_LIMIT)
     .toArray();
 }
 
@@ -190,7 +196,7 @@ export async function getArchivedTransfers(options: {
     .find(filter)
     .sort({ transferDate: -1 })
     .skip(options.skip || 0)
-    .limit(options.limit || 500)
+    .limit(options.limit ?? ARCHIVE_NO_LIMIT)
     .toArray();
 }
 

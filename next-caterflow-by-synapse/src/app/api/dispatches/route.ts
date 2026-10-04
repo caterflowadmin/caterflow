@@ -10,6 +10,7 @@ import { getUserSiteInfo, buildTransactionSiteFilter } from '@/lib/siteFiltering
 import { updateStockForTransaction } from '@/lib/stockCalculations';
 import { getArchivedDispatchLogs } from '@/lib/archiveQueries';
 import { getMaxSequenceNumber } from '@/lib/archiveService';
+import { mergeById } from '@/lib/financialReport';
 
 // normalize refs to string ids
 const resolveRef = (val: any): string | null => {
@@ -105,6 +106,7 @@ export async function GET() {
             _id,
             dispatchNumber,
             dispatchDate,
+            status,
             evidenceStatus,
             peopleFed,
             notes,
@@ -179,6 +181,8 @@ export async function GET() {
                     name,
                     sku,
                     unitOfMeasure,
+                    unitPrice,
+                    isVATApplicable,
                     "category": category->{
                         _id,
                         title
@@ -244,7 +248,7 @@ export async function GET() {
         }
 
         // Merge: Sanity (recent) + MongoDB (archived), sorted by date descending
-        const merged = [...transformedDispatches, ...archivedDispatches].sort(
+        const merged = mergeById(transformedDispatches, archivedDispatches).sort(
             (a, b) => new Date(b.dispatchDate).getTime() - new Date(a.dispatchDate).getTime()
         );
 
@@ -416,7 +420,10 @@ export async function POST(request: Request) {
         });
 
         // Only update stock if dispatch is being completed
-        if (result.status === 'complete') {
+        // (This used to compare against 'complete', but the schema value is
+        // 'completed', so dispatches created as completed never deducted stock.
+        // Both fields are synced above, so either identifies a completed dispatch.)
+        if (result.status === 'completed') {
             console.log('📦 Updating stock for newly created completed dispatch');
             await updateStockForTransaction('dispatch', result._id);
         }

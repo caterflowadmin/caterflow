@@ -9,6 +9,7 @@ import { authOptions } from '@/lib/auth';
 import { getUserSiteInfo, buildGoodsReceiptSiteFilter } from '@/lib/siteFiltering';
 import { getArchivedGoodsReceipts } from '@/lib/archiveQueries';
 import { getMaxSequenceNumber } from '@/lib/archiveService';
+import { mergeById } from '@/lib/financialReport';
 
 const getNextReceiptNumber = async (): Promise<string> => {
     try {
@@ -177,6 +178,7 @@ export async function GET() {
                     sku,
                     unitOfMeasure,
                     unitPrice,
+                    isVATApplicable,
                     "category": category->{
                         _id,
                         title
@@ -256,7 +258,7 @@ export async function GET() {
         }
 
         // Merge and sort by receiptDate descending
-        const merged = [...processedReceipts, ...archivedReceipts].sort(
+        const merged = mergeById(processedReceipts, archivedReceipts).sort(
             (a, b) => new Date(b.receiptDate).getTime() - new Date(a.receiptDate).getTime()
         );
 

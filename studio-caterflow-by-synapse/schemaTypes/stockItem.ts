@@ -117,6 +117,13 @@ export default defineType({
             description: 'Price per unit.',
         }),
         defineField({
+            name: 'isVATApplicable',
+            title: 'VAT Applicable',
+            type: 'boolean',
+            initialValue: true,
+            description: 'Untick for zero-rated or exempt items. Reports charge VAT on every item unless this is explicitly off.',
+        }),
+        defineField({
             name: 'suppliers',
             title: 'Suppliers',
             type: 'array',
