@@ -7,6 +7,23 @@ Each finding is marked **Confirmed** (the faulty code was read and the failure f
 
 ---
 
+## 0. Platform limits this plan must respect
+
+| Service | Limit | Source |
+|---------|-------|--------|
+| **Sanity** | **25,000 documents** on CaterFlow's plan (Gee, 2026-10-04). Requests are blocked at the cap rather than billed. Public free plan is 10,000 documents, 250,000 API requests, 1M CDN requests, 100 GB bandwidth. | Gee; [Sanity pricing](https://www.sanity.io/pricing?lang=en) |
+| MongoDB Atlas M0 | 512 MB storage, 100 ops/s, 100 connections, about 1 GB/week in and out, no backups | [Atlas free limits](https://mongodb.com/docs/atlas/reference/free-shared-limitations/) |
+| Vercel Hobby | 1M edge requests, 100 GB data transfer, 100 deployments/day; deployments are blocked when fair-use or plan limits are exceeded | [Vercel community](https://community.vercel.com/t/owner-of-this-deployment-has-been-blocked-deployment-cannot-proceed/17978) |
+
+Consequences for the fixes below:
+
+1. **Document headroom.** In March the project held about 12,450 Sanity documents (about 50% of 25,000; see `analysis.md`). The 60-day archive window is a headroom control, not a hard requirement: it keeps live documents well under the cap, so the stock tools must work from Sanity plus the archive (F-01 to F-04) rather than assume everything is live.
+2. **Any new Sanity document type costs quota.** Period closes and opening balances are deliberately stored in MongoDB (`report_anchors`), not Sanity. Phase 3 cost layers must follow the same rule.
+3. **Measure before changing retention.** Add a daily count of Sanity documents by type to the monitoring in Phase 5, with alerts at 70% (17,500) and 85% (21,250) of the limit. Raising `ARCHIVE_DAYS_THRESHOLD` above 60 is only safe while the count stays below the 70% line.
+4. **Atlas bandwidth.** The report now loads the complete archive. With about 1 GB/week out on M0, prefer the server-side summary and cache; move to a paid tier if the weekly transfer approaches the cap.
+
+---
+
 ## 1. Summary
 
 The Reports page was wrong for four reasons that exist elsewhere in the app too:
@@ -146,6 +163,7 @@ The Reports page was wrong for four reasons that exist elsewhere in the app too:
 | Calculator parity | Shadow-mode mismatch log must be empty before cut-over |
 | Registry parity | Nightly invariant (Phase 2.5) |
 | Endpoint contracts | One test per count/total endpoint with a frozen clock and a mixed-store fixture |
+| Sanity quota | Daily document count by type; alert at 70% and 85% of 25,000 |
 | Data audit script | `scripts/audit_accuracy.js` reporting: documents present in both stores; draft documents in effective windows; receipt lines priced 0; dispatches without selling price; negative stock by bin |
 
 ---

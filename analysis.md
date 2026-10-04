@@ -57,8 +57,10 @@
 
 ### ⚠️ **QUOTA STATUS**
 
-- You are now at **~12,448 documents**, which is likely still above the free plan limit.
-- Immediate action is required to reduce document count.
+- **CaterFlow's Sanity plan limit is 25,000 documents** (confirmed by Gee, 2026-10-04). This is not the public free-plan figure of 10,000, which an earlier version of this note wrongly assumed.
+- At the time of this report (March 2026) the project held **~12,448 documents, about 50% of the 25,000 limit**, so it was not over quota.
+- Headroom was about 12,500 documents. Re-measure before relying on this: transaction volume has grown since March (see the accuracy plan, section 0).
+- Keep the archive and cleanup jobs running: the limit is enforced by Sanity, and a free-style plan blocks requests at the cap instead of billing the overage.
 
 ---
 
