@@ -22,13 +22,13 @@ Status key: **Done** = implemented and tested · **Later** = not built.
 | Server-side summary endpoint (~1 KB), used as the fast path | Done | `api/reports/financials` |
 | Stale-while-revalidate cache for raw documents | Done (in-memory, 5 min) | `rawDataCache` in `page.tsx` |
 | Code-split charts (recharts) and on-demand xlsx / file-saver | Done | `reports/charts.tsx`, dynamic imports |
-| Split of `page.tsx` | Partly done: charts, constants, skeletons, types, filters, calculation, bar, drawers and controls extracted (page ~4,600 lines, was ~6,400); fetch/processing hook still inside the page | |
+| Split of `page.tsx` | Partly done: charts, constants, skeletons, types, filters, calculation, bar, drawers and controls extracted (page ~4,300 lines, was ~6,400; VAT helpers moved to `lib/reportVat.ts`); fetch/processing hook still inside the page | |
 | Period close, opening-balance record, reopen with audit trail | Done | `api/reports/period-close`, `lib/periodClose.ts`, `lib/reportAnchors.ts`, `reports/PeriodControls.tsx` |
 | Edited-after-close detection | Done | `computeFinancials` |
 | Item-level reconciliation view | Done | `reports/ReconciliationPanel.tsx`, `buildReconciliation` |
 | Export parity (data-quality block in workbooks) | Done | `buildIntegrityRows` |
 | Role-based views and API enforcement | Done | `lib/reportAccess.ts`, route handlers |
-| True lazy *fetching* per tab, saved views, scheduled summaries, anomaly flags, offline snapshot | Later | Section 7 |
+| True lazy *fetching* per tab (Overview KPIs need POs, low stock and stock values, so only the Charts/Export tabs could defer, which they already do by mounting lazily),  saved views, scheduled summaries, anomaly flags, offline snapshot | Later | Section 7 |
 
 
 ---

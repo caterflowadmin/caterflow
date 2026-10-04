@@ -625,8 +625,11 @@ export async function PATCH(request: Request) {
 
         const result = await patch.commit();
 
-        // ✅ Update stock if dispatch is completed (ONLY HERE, not in validation)
-        if (result.status === "completed") {
+        // ✅ Deduct stock only on the transition TO completed. Checking just
+        // result.status re-deducted on every later edit of a document whose
+        // status was 'completed' but whose evidenceStatus was not yet 'complete'
+        // (the edit guard above only blocks evidenceStatus === 'complete').
+        if (willBeCompleted && !wasCompleted) {
             console.log('📦 Updating stock for completed dispatch:', result.dispatchNumber);
             await updateStockForTransaction('dispatch', result._id);
         }
