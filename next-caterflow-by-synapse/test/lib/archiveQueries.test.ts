@@ -11,6 +11,10 @@ jest.mock("@/lib/mongoClient", () => ({
   COLLECTIONS: {
     ARCHIVE_RUNS: "archive_runs",
     STOCK_BASELINES: "stock_baselines",
+    DISPATCH_LOGS: "dispatch_logs",
+    GOODS_RECEIPTS: "goods_receipts",
+    INVENTORY_COUNTS: "inventory_counts",
+    INTERNAL_TRANSFERS: "internal_transfers",
   },
 }));
 
@@ -25,7 +29,13 @@ jest.mock("@/lib/archiveService", () => ({
   reconstructStockBaselineChain: jest.fn(),
 }));
 
-import { getRecentArchiveRuns } from "@/lib/archiveQueries";
+import {
+  getRecentArchiveRuns,
+  getArchivedDispatchLogs,
+  getArchivedGoodsReceipts,
+  getArchivedBinCounts,
+  getArchivedTransfers,
+} from "@/lib/archiveQueries";
 import { getArchiveDb } from "@/lib/mongoClient";
 
 describe("getRecentArchiveRuns", () => {
@@ -43,5 +53,39 @@ describe("getRecentArchiveRuns", () => {
     expect(query.kind.$nin).toEqual(
       expect.arrayContaining(["progress", "cleanup-progress"]),
     );
+  });
+});
+
+// Regression: archived history used to be silently capped at the newest 500
+// documents, so reports built opening stock from a truncated ledger.
+describe("archived transaction queries return the complete history", () => {
+  const setup = () => {
+    const toArray = jest.fn().mockResolvedValue([]);
+    const limit = jest.fn().mockReturnValue({ toArray });
+    const skip = jest.fn().mockReturnValue({ limit });
+    const sort = jest.fn().mockReturnValue({ skip });
+    const find = jest.fn().mockReturnValue({ sort });
+    (getArchiveDb as jest.Mock).mockResolvedValue({
+      collection: jest.fn().mockReturnValue({ find }),
+    });
+    return limit;
+  };
+  const opts = { userSiteId: null, canAccessMultipleSites: true };
+
+  it.each([
+    ["dispatches", getArchivedDispatchLogs],
+    ["goods receipts", getArchivedGoodsReceipts],
+    ["bin counts", getArchivedBinCounts],
+    ["transfers", getArchivedTransfers],
+  ])("does not cap %s at 500", async (_name, fn) => {
+    const limit = setup();
+    await (fn as any)(opts);
+    expect(limit).toHaveBeenCalledWith(0); // Mongo: 0 = no limit
+  });
+
+  it("still honours an explicit limit", async () => {
+    const limit = setup();
+    await getArchivedDispatchLogs({ ...opts, limit: 25 });
+    expect(limit).toHaveBeenCalledWith(25);
   });
 });

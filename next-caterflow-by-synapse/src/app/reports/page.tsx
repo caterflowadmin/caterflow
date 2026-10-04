@@ -80,29 +80,11 @@ import {
   FiEyeOff,
 } from "react-icons/fi";
 
-// Chart components
-import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  PieChart,
-  Pie,
-  Cell,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-  ComposedChart,
-} from "recharts";
+import dynamic from "next/dynamic";
 
 // Excel export utilities
-import * as XLSX from "xlsx";
-import { saveAs } from "file-saver";
+// xlsx and file-saver are loaded on demand inside exportToExcel so they stay
+// out of the initial page bundle.
 import {
   format,
   subDays,
@@ -113,15 +95,70 @@ import {
   isWithinInterval,
 } from "date-fns";
 import { calculateBulkStock } from "@/lib/stockCalculations";
-import { getUserSiteInfo } from "@/lib/siteFiltering"; // Add this import
 import { resolveUnitPrice } from "@/lib/unitPriceResolver";
 import {
   parseDateRangeBoundary,
   isDateWithinRange,
 } from "@/lib/dateRangeUtils";
 import { VAT_CONFIG } from "@/lib/vatConfig";
+import {
+  calculateDispatchVAT,
+  calculateGoodsReceiptVAT,
+  calculateInventoryVAT,
+  calculatePurchaseOrderVAT,
+} from "@/lib/reportVat";
+import FinancialSummary from "./FinancialSummary";
+import { CHART_COLORS } from "./chartConstants";
+import type { EnhancedAnalyticsData } from "./types";
+import { ChartSkeleton } from "./skeletons";
+import PeriodBar from "./PeriodBar";
+import PeriodControls from "./PeriodControls";
+import DrillDownDrawer from "./DrillDownDrawer";
+import ReconciliationPanel from "./ReconciliationPanel";
+import { ErrorCard, LoadFailureBanner } from "./DataStatus";
+import {
+  buildDrillRows,
+  buildIntegrityRows,
+  buildReconciliation,
+  toSummaryShape,
+  type DrillKind,
+} from "@/lib/financialReport";
+import {
+  canManagePeriods,
+  canViewFinance,
+  canViewReconciliation,
+} from "@/lib/reportAccess";
+import { filterDataBySite } from "@/lib/reportFilters";
+import {
+  computeFinancials,
+  dispatchSales,
+  isEffectiveCount,
+  isEffectiveDispatch,
+  isEffectiveReceipt,
+  type IntegrityIssue,
+} from "@/lib/financialReport";
 
 // Removed: unused filterTransitionStyle, filterLoadingStyle, useChartReady hook
+
+
+// Charts are code-split: recharts loads the first time a chart renders.
+const chartLoading = () => <ChartSkeleton />;
+const StatusPieChart = dynamic(
+  () => import("./charts").then((m) => m.StatusPieChart),
+  { ssr: false, loading: chartLoading },
+) as typeof import("./charts").StatusPieChart;
+const BarChartComponent = dynamic(
+  () => import("./charts").then((m) => m.BarChartComponent),
+  { ssr: false, loading: chartLoading },
+) as typeof import("./charts").BarChartComponent;
+const VisualAnalyticsTab = dynamic(
+  () => import("./charts").then((m) => m.VisualAnalyticsTab),
+  { ssr: false, loading: chartLoading },
+) as typeof import("./charts").VisualAnalyticsTab;
+const DataExportTab = dynamic(
+  () => import("./charts").then((m) => m.DataExportTab),
+  { ssr: false, loading: chartLoading },
+) as typeof import("./charts").DataExportTab;
 
 // Types based on your Sanity schemas
 interface AppUser {
@@ -273,156 +310,6 @@ interface Supplier {
 }
 
 // Enhanced Analytics Data Interface with VAT
-interface EnhancedAnalyticsData {
-  summary: {
-    totalPurchaseOrders: number;
-    totalGoodsReceipts: number;
-    totalDispatches: number;
-    totalTransfers: number;
-    totalBinCounts: number;
-    totalStockItems: number;
-    totalSuppliers: number;
-    totalUsers: number;
-    totalSites: number;
-    totalInventoryValue: number;
-    totalPeopleFed: number;
-    lowStockItems: number;
-    criticalStockItems: number;
-    totalVATCollected: number; // New VAT summary
-    totalVATPaid: number; // New VAT summary
-    netVATLiability: number; // New VAT summary
-  };
-  purchaseOrders: {
-    byStatus: Array<{ name: string; value: number }>;
-    bySite: Array<{ name: string; value: number }>;
-    byMonth: Array<{ name: string; value: number }>;
-    totalValue: number;
-    vatAmount: number; // New VAT field
-    totalWithVAT: number; // New VAT field
-    avgOrderValue: number;
-    topItems: Array<{
-      name: string;
-      quantity: number;
-      value: number;
-      vatAmount: number;
-    }>;
-    statusBreakdown: { [key: string]: number };
-  };
-  goodsReceipts: {
-    byStatus: Array<{ name: string; value: number }>;
-    bySite: Array<{ name: string; value: number }>;
-    efficiency: number;
-    conditionBreakdown: { [key: string]: number };
-    totalValue: number; // New field
-    vatAmount: number; // New VAT field
-    totalWithVAT: number; // New VAT field
-  };
-  dispatches: {
-    byType: Array<{ name: string; value: number }>;
-    bySite: Array<{ name: string; value: number }>;
-    totalPeopleFed: number;
-    totalCost: number;
-    vatAmount: number; // New VAT field
-    totalWithVAT: number; // New VAT field
-    costPerPerson: number;
-    topItems: Array<{
-      name: string;
-      quantity: number;
-      cost: number;
-      vatAmount: number;
-    }>;
-    totalSales: number;
-    salesVAT: number; // New VAT field
-    salesWithVAT: number; // New VAT field
-  };
-  transfers: {
-    byStatus: Array<{ name: string; value: number }>;
-    bySite: Array<{ name: string; value: number }>;
-    approvalRate: number;
-  };
-  inventory: {
-    byCategory: Array<{ name: string; value: number }>;
-    totalValue: number;
-    vatIncluded: number; // New VAT field
-    lowStockBreakdown: {
-      critical: number;
-      warning: number;
-      healthy: number;
-    };
-  };
-  binCounts: {
-    byStatus: Array<{ name: string; value: number }>;
-    accuracy: number;
-    varianceAnalysis: {
-      positive: {
-        quantity: number;
-        cost: number;
-      };
-      negative: {
-        quantity: number;
-        cost: number;
-      };
-      zero: {
-        quantity: number;
-        cost: number;
-      };
-    };
-  };
-  financial: {
-    monthlySpending: Array<{
-      month: string;
-      spending: number;
-      vat: number;
-      totalWithVAT: number;
-    }>;
-    costPerPersonTrend: Array<{ date: string; cost: number }>;
-    inventoryTurnover: number;
-    totalReceivedGoodsValue: number;
-    totalSales: number;
-    consumption: number;
-    profit: number;
-    profitPercentage: number;
-    closingStockValue: number;
-    periodPurchases: number;
-    periodConsumption: number;
-    periodSales: number;
-    openingStock: number;
-    netVariances: number;
-    // VAT-specific financials
-    vatOnPurchases: number;
-    vatOnSales: number;
-    netVATPayable: number;
-    grossProfitBeforeVAT: number;
-    grossProfitAfterVAT: number;
-  };
-  suppliers: {
-    performance: Array<{
-      name: string;
-      orders: number;
-      value: number;
-      vatAmount: number;
-    }>;
-    activeCount: number;
-    vatRegisteredCount: number; // New VAT field
-  };
-  users: {
-    byRole: Array<{ name: string; value: number }>;
-    activity: Array<{ name: string; actions: number }>;
-  };
-  vat: {
-    summary: {
-      totalOutputVAT: number;
-      totalInputVAT: number;
-      netVATPayable: number;
-      vatRate: number;
-    };
-    breakdown: {
-      purchases: { vatAmount: number; totalWithVAT: number };
-      sales: { vatAmount: number; totalWithVAT: number };
-      inventory: { vatAmount: number; totalWithVAT: number };
-    };
-  };
-}
 
 // OLD REPORTS INTERFACES
 interface ReportData {
@@ -609,168 +496,14 @@ const getEmptyAnalyticsData = (): EnhancedAnalyticsData => ({
 
 // Add this helper function after the existing getEmptyAnalyticsData function
 // This will filter any array of items by site ID on the client side
-const filterDataBySite = <T extends any[]>(
-  data: T,
-  siteId: string | null,
-  itemType:
-    | "purchaseOrder"
-    | "goodsReceipt"
-    | "dispatch"
-    | "transfer"
-    | "binCount"
-    | "stockItem"
-    | "supplier"
-    | "user",
-): T => {
-  if (!siteId || siteId === "all" || !data || !Array.isArray(data)) {
-    return data;
-  }
+// In-memory stale-while-revalidate cache for the (range-independent) raw
+// documents. Survives client-side navigation, so returning to the page shows
+// the last numbers immediately while a background refresh runs.
+const RAW_CACHE_TTL_MS = 5 * 60 * 1000;
+let rawDataCache: { userId: string; at: number; data: { [key: string]: any[] } } | null =
+  null;
 
-  console.log(`🔍 Filtering ${itemType} data by site: ${siteId}`);
-
-  return data.filter((item: any) => {
-    try {
-      switch (itemType) {
-        case "purchaseOrder":
-          // Purchase orders have direct site reference
-          return item.site?._id === siteId || item.site === siteId;
-
-        case "goodsReceipt":
-          // Goods receipts: check purchase order site OR receiving bin site
-          return (
-            item.purchaseOrder?.site?._id === siteId ||
-            item.purchaseOrder?.site === siteId ||
-            item.receivingBin?.site?._id === siteId ||
-            item.receivingBin?.site === siteId ||
-            item.receivedItems?.some(
-              (ri: any) =>
-                ri.receivingBin?.site?._id === siteId ||
-                ri.receivingBin?.site === siteId,
-            )
-          );
-
-        case "dispatch":
-          // Dispatches: check source bin site
-          return (
-            item.sourceBin?.site?._id === siteId ||
-            item.sourceBin?.site === siteId ||
-            item.dispatchedItems?.some(
-              (di: any) =>
-                di.sourceBin?.site?._id === siteId ||
-                di.sourceBin?.site === siteId,
-            )
-          );
-
-        case "transfer":
-          // Transfers: check from bin site OR to bin site
-          return (
-            item.fromBin?.site?._id === siteId ||
-            item.fromBin?.site === siteId ||
-            item.toBin?.site?._id === siteId ||
-            item.toBin?.site === siteId
-          );
-
-        case "binCount":
-          // Bin counts: check bin site
-          return item.bin?.site?._id === siteId || item.bin?.site === siteId;
-
-        case "stockItem":
-          // Stock items can live in bins across multiple sites.
-          // Filter by whether the item has any stock in a bin belonging to siteId.
-          // Check the item-level site hint if present (set by getFilteredStockValues),
-          // otherwise include the item so callers that need full lists still work.
-          if (item.site?._id) return item.site._id === siteId;
-          if (item.bins) {
-            return item.bins.some(
-              (b: any) => b.site?._id === siteId || b.site === siteId,
-            );
-          }
-          // No site info on item – include it and let getFilteredStockValues handle quantity.
-          return true;
-
-        case "supplier":
-          // Suppliers aren't site-specific
-          return true;
-
-        case "user":
-          // Users have associated site
-          return (
-            item.associatedSite?._id === siteId ||
-            item.associatedSite === siteId
-          );
-
-        default:
-          return true;
-      }
-    } catch (error) {
-      console.warn(`Error filtering ${itemType} item:`, error);
-      return false;
-    }
-  }) as T;
-};
-
-// Net value effect of internal transfers on a single site's stock value.
-// A transfer INTO the filtered site is a value inflow (like a receipt);
-// a transfer OUT of the filtered site is a value outflow (like a dispatch).
-// Transfers between two bins of the SAME filtered site (or when no specific
-// site is selected) net to zero, since the stock never leaves the scope
-// being valued. Transfers are valued at the stock item's current unitPrice,
-// consistent with how bin-count variances are valued elsewhere in this file.
-const computeNetTransferValue = (
-  transfers: any[],
-  filterSiteId: string | null | undefined,
-): number => {
-  if (!filterSiteId || filterSiteId === "all" || !Array.isArray(transfers)) {
-    return 0;
-  }
-
-  return transfers.reduce((sum: number, t: any) => {
-    const fromSiteId = t.fromBin?.site?._id || t.fromBin?.site;
-    const toSiteId = t.toBin?.site?._id || t.toBin?.site;
-    const isInflow = toSiteId === filterSiteId;
-    const isOutflow = fromSiteId === filterSiteId;
-
-    // Same-site bin-to-bin transfer (or a transfer touching neither side,
-    // which shouldn't occur since the caller already filtered by site) —
-    // no net value change for this site.
-    if (isInflow === isOutflow) return sum;
-
-    const items = t.items || t.transferredItems || [];
-    const transferValue = items.reduce((itemSum: number, item: any) => {
-      const qty = Number(item.transferredQuantity || 0);
-      const unitPrice = Number(item.stockItem?.unitPrice || 0);
-      return itemSum + qty * unitPrice;
-    }, 0);
-
-    return sum + (isInflow ? transferValue : -transferValue);
-  }, 0);
-};
-
-// Chart color schemes
-const CHART_COLORS = {
-  primary: ["#3182CE", "#63B3ED", "#90CDF4", "#BEE3F8"],
-  success: ["#38A169", "#68D391", "#9AE6B4", "#C6F6D5"],
-  warning: ["#DD6B20", "#F6AD55", "#FBD38D", "#FEEBC8"],
-  error: ["#E53E3E", "#FC8181", "#FEB2B2", "#FED7D7"],
-  purple: ["#805AD5", "#B794F4", "#D6BCFA", "#E9D8FD"],
-  pink: ["#D53F8C", "#F687B3", "#FBB6CE", "#FED7E2"],
-  gray: ["#4A5568", "#718096", "#A0AEC0", "#CBD5E0"],
-  vat: ["#2D3748", "#4A5568", "#718096", "#A0AEC0"], // VAT-specific colors
-};
-
-const STATUS_COLORS: { [key: string]: string } = {
-  draft: "gray",
-  "pending-approval": "orange",
-  approved: "blue",
-  completed: "green",
-  processed: "green",
-  "partially-received": "yellow",
-  "in-progress": "purple",
-  cancelled: "red",
-  rejected: "red",
-  scheduled: "blue",
-  adjusted: "purple",
-};
+const TAB_KEYS = ["overview", "charts", "export"] as const;
 
 // Skeleton components for better loading states
 const MetricSkeleton = () => (
@@ -783,14 +516,6 @@ const MetricSkeleton = () => (
   </Card>
 );
 
-const ChartSkeleton = () => (
-  <Card minH="400px">
-    <CardBody>
-      <Skeleton height="24px" mb={4} />
-      <Skeleton height="300px" />
-    </CardBody>
-  </Card>
-);
 
 const TableSkeleton = () => (
   <Card>
@@ -811,6 +536,36 @@ export default function ComprehensiveReportsPage() {
   // Analytics states
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+  // Names of data sources that failed to load (shown as a banner instead of
+  // silently becoming empty lists).
+  const [loadErrors, setLoadErrors] = useState<string[]>([]);
+  const [loadProgress, setLoadProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  // Fast-path answer from /api/reports/financials, shown while the full
+  // document download is still in flight.
+  const [serverFin, setServerFin] = useState<ReturnType<
+    typeof toSummaryShape
+  > | null>(null);
+  const [serverAnchor, setServerAnchor] = useState<{
+    kind: "close" | "opening-balance";
+    asOf: string;
+    value: number;
+    recordedAt?: string | null;
+  } | null>(null);
+  const [urlReady, setUrlReady] = useState(false);
+  // Latest period close / opening balance, read synchronously by the
+  // calculation (state would lag one render behind).
+  const anchorRef = useRef<typeof serverAnchor>(null);
+  const loadSeqRef = useRef(0);
+  const initialLoadRef = useRef(false);
+  const lastScopeRef = useRef("");
+  const [drill, setDrill] = useState<{ kind: DrillKind; title: string } | null>(
+    null,
+  );
+  const [reconcileOpen, setReconcileOpen] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   const [analyticsData, setAnalyticsData] =
     useState<EnhancedAnalyticsData | null>(null);
@@ -869,7 +624,6 @@ export default function ComprehensiveReportsPage() {
   });
   const [compareMode, setCompareMode] = useState(false);
 
-  const [calculatingOpeningStock, setCalculatingOpeningStock] = useState(false);
 
   const toast = useToast();
 
@@ -1065,167 +819,6 @@ export default function ComprehensiveReportsPage() {
     [primaryDateRange.start, primaryDateRange.end],
   );
 
-  // ========== VAT CALCULATION FUNCTIONS ==========
-
-  // Calculate VAT for purchase order items
-  const calculatePurchaseOrderVAT = useCallback(
-    (purchaseOrders: any[]): any[] => {
-      return purchaseOrders.map((po) => {
-        let totalVAT = 0;
-        let totalWithVAT = 0;
-
-        const itemsWithVAT =
-          po.orderedItems?.map((item: any) => {
-            // DEFENSIVE: Check if VAT field exists
-            const isVATApplicable =
-              item.stockItem?.isVATApplicable !== false &&
-              item.stockItem?.isVATApplicable !== undefined;
-            const itemTotal =
-              (item.orderedQuantity || 0) *
-              resolveUnitPrice(item.unitPrice, item.stockItem?.unitPrice);
-            const { vatAmount, totalWithVAT: itemTotalWithVAT } =
-              VAT_CONFIG.calculateVAT(itemTotal, isVATApplicable);
-
-            totalVAT += vatAmount;
-            totalWithVAT += itemTotalWithVAT;
-
-            return {
-              ...item,
-              vatAmount,
-              totalWithVAT: itemTotalWithVAT,
-              isVATApplicable, // Add this for clarity
-            };
-          }) || [];
-
-        return {
-          ...po,
-          orderedItems: itemsWithVAT,
-          vatAmount: totalVAT,
-          totalWithVAT: totalWithVAT || po.totalAmount,
-          hasVATCalculations: true, // Flag to track
-        };
-      });
-    },
-    [],
-  );
-
-  // Calculate VAT for goods receipt items
-  // Replace the existing calculateGoodsReceiptVAT function with this:
-  const calculateGoodsReceiptVAT = useCallback(
-    (goodsReceipts: any[]): any[] => {
-      return goodsReceipts.map((gr) => {
-        let totalVAT = 0;
-        let totalWithVAT = 0;
-
-        const itemsWithVAT =
-          gr.receivedItems?.map((item: any) => {
-            const isVATApplicable = item.stockItem?.isVATApplicable !== false;
-            const itemTotal =
-              (item.receivedQuantity || 0) *
-              resolveUnitPrice(item.unitPrice, item.stockItem?.unitPrice);
-            const { vatAmount, totalWithVAT: itemTotalWithVAT } =
-              VAT_CONFIG.calculateVAT(itemTotal, isVATApplicable);
-
-            totalVAT += vatAmount;
-            totalWithVAT += itemTotalWithVAT;
-
-            return {
-              ...item,
-              vatAmount,
-              totalWithVAT: itemTotalWithVAT,
-            };
-          }) || [];
-
-        return {
-          ...gr,
-          receivedItems: itemsWithVAT,
-          vatAmount: totalVAT,
-          totalWithVAT: totalWithVAT,
-        };
-      });
-    },
-    [],
-  );
-
-  // Calculate VAT for dispatch items
-  // Replace the existing calculateDispatchVAT function with this:
-  const calculateDispatchVAT = useCallback((dispatches: any[]): any[] => {
-    return dispatches.map((dispatch) => {
-      let totalVAT = 0;
-      let totalWithVAT = 0;
-
-      const itemsWithVAT =
-        dispatch.dispatchedItems?.map((item: any) => {
-          const isVATApplicable = item.stockItem?.isVATApplicable !== false;
-          const itemTotal =
-            item.totalCost ||
-            (item.dispatchedQuantity || 0) *
-              resolveUnitPrice(item.unitPrice, item.stockItem?.unitPrice);
-          const { vatAmount, totalWithVAT: itemTotalWithVAT } =
-            VAT_CONFIG.calculateVAT(itemTotal, isVATApplicable);
-
-          totalVAT += vatAmount;
-          totalWithVAT += itemTotalWithVAT;
-
-          return {
-            ...item,
-            vatAmount,
-            totalWithVAT: itemTotalWithVAT,
-          };
-        }) || [];
-
-      // Calculate VAT on sales - get selling price from dispatchType
-      const sellingPrice =
-        dispatch.dispatchType?.sellingPrice || dispatch.sellingPrice || 0;
-      const peopleFed = dispatch.peopleFed || 0;
-      const totalSales = sellingPrice * peopleFed;
-      const salesVAT = VAT_CONFIG.calculateVAT(totalSales, true).vatAmount;
-      const salesWithVAT = totalSales + salesVAT;
-
-      return {
-        ...dispatch,
-        dispatchedItems: itemsWithVAT,
-        vatAmount: totalVAT,
-        totalWithVAT: totalWithVAT,
-        salesVAT: salesVAT,
-        salesWithVAT: salesWithVAT,
-        totalSales: totalSales,
-      };
-    });
-  }, []);
-
-  // Calculate VAT for inventory values
-  const calculateInventoryVAT = useCallback(
-    (stockItems: any[]): { items: any[]; totalVAT: number } => {
-      let totalVAT = 0;
-
-      const itemsWithVAT = stockItems.map((item) => {
-        const isVATApplicable = item.isVATApplicable !== false;
-        const stockValue =
-          (item.currentStock || 0) *
-          resolveUnitPrice(item.unitPrice, item.stockItem?.unitPrice);
-        const { vatAmount } = VAT_CONFIG.calculateVAT(
-          stockValue,
-          isVATApplicable,
-        );
-
-        totalVAT += vatAmount;
-
-        return {
-          ...item,
-          stockVAT: vatAmount,
-          stockValueWithVAT: stockValue + vatAmount,
-        };
-      });
-
-      return {
-        items: itemsWithVAT,
-        totalVAT,
-      };
-    },
-    [],
-  );
-
   // ========== NEW ANALYTICS FUNCTIONS ==========
 
   // Filter data by date range – robust with fallback field + user-facing toast
@@ -1258,313 +851,18 @@ export default function ComprehensiveReportsPage() {
         }
       });
 
+      // Records without a usable date fall outside every period. They are
+      // reported once as a data-quality alert by computeFinancials() instead
+      // of raising a toast on every filter call.
       if (missingDateCount > 0) {
-        toast({
-          title: "Missing Date Fields",
-          description: `${missingDateCount} record(s) were excluded because no valid date was found in the "${dateField}" field.`,
-          status: "warning",
-          duration: 5000,
-          isClosable: true,
-        });
+        console.warn(
+          `${missingDateCount} record(s) skipped: no valid "${dateField}"`,
+        );
       }
 
       return filtered;
     },
-    [dateRangeMemo, toast],
-  );
-
-  // ========== CORRECTED: Manual opening stock helper ==========
-  // Uses standard inventory accounting: opening = currentStock − receipts_after + dispatches_after
-  // i.e. unwind future receipts (additions) and re-add future dispatches (subtractions)
-  const calculateManualOpeningStock = useCallback(
-    (
-      targetDate: Date,
-      currentStockItems: any[],
-      allGoodsReceipts: any[],
-      allDispatches: any[],
-    ): number => {
-      try {
-        console.log(
-          "🧮 Calculating manual opening stock for:",
-          targetDate.toDateString(),
-        );
-
-        // Transactions that happened AFTER targetDate (need to be unwound)
-        const receiptsAfterDate = allGoodsReceipts.filter((gr) => {
-          try {
-            return new Date(gr.receiptDate) > targetDate;
-          } catch {
-            return false;
-          }
-        });
-
-        const dispatchesAfterDate = allDispatches.filter((d) => {
-          try {
-            return new Date(d.dispatchDate) > targetDate;
-          } catch {
-            return false;
-          }
-        });
-
-        const itemBalances: { [itemId: string]: number } = {};
-
-        // Baseline = current stock
-        currentStockItems.forEach((item) => {
-          if (item?._id) {
-            itemBalances[item._id] = item.currentStock || 0;
-          }
-        });
-
-        // Unwind receipts that came AFTER targetDate (subtract them from current)
-        receiptsAfterDate.forEach((receipt) => {
-          receipt.receivedItems?.forEach((item: any) => {
-            const id = item.stockItem?._id;
-            const qty = item.receivedQuantity || 0;
-            if (id && qty > 0) {
-              itemBalances[id] = (itemBalances[id] || 0) - qty; // ✅ subtract
-            }
-          });
-        });
-
-        // Re-add dispatches that happened AFTER targetDate (add back consumed qty)
-        dispatchesAfterDate.forEach((dispatch) => {
-          dispatch.dispatchedItems?.forEach((item: any) => {
-            const id = item.stockItem?._id;
-            const qty = item.dispatchedQuantity || 0;
-            if (id && qty > 0) {
-              itemBalances[id] = (itemBalances[id] || 0) + qty; // ✅ add back
-            }
-          });
-        });
-
-        // Aggregate monetary value
-        let totalStockValue = 0;
-        currentStockItems.forEach((item) => {
-          const balance = Math.max(0, itemBalances[item._id] || 0);
-          totalStockValue += balance * (item.unitPrice || 0);
-        });
-
-        console.log("💰 Manual opening stock:", totalStockValue);
-        return totalStockValue;
-      } catch (error) {
-        console.error("❌ Error in manual opening stock:", error);
-        return 0;
-      }
-    },
-    [],
-  );
-
-  // ========== FIXED: Opening stock calculation ==========
-  // Standard formula: opening = Σ(receipts before date) − Σ(dispatches before date)
-  // Optional inventoryCounts map lets a physical count override the computed baseline.
-  const calculateOpeningStockForDate = useCallback(
-    async (
-      targetDate: Date,
-      allGoodsReceipts: any[],
-      allDispatches: any[],
-      // Optional: { `${stockItemId}`: countedQuantity } – from a physical inventory count
-      inventoryCounts?: Record<string, number>,
-      allTransfers?: any[],
-      filterSiteId?: string | null,
-    ): Promise<number> => {
-      console.log(
-        "💰 CALCULATING OPENING STOCK FOR:",
-        targetDate.toISOString().split("T")[0],
-      );
-      console.log("📦 Raw receipts count:", allGoodsReceipts.length);
-      console.log("🚚 Raw dispatches count:", allDispatches.length);
-
-      try {
-        // ========== 1. FILTER TRANSACTIONS STRICTLY BEFORE TARGET DATE ==========
-        // targetDate is the reporting period's start (see the call site:
-        // calculateOpeningStockForDate(dateRange.start, ...)), and
-        // periodGoodsReceipts/periodDispatches (computed separately by the
-        // caller via filterDataByDateRange) already INCLUDE anything dated
-        // exactly at dateRange.start. Using `<=` here would double-count
-        // same-instant records in both "opening stock" and "period
-        // purchases/consumption" — must be strictly `<` so opening stock
-        // reflects the balance BEFORE the period, not including its first
-        // instant.
-        const receiptsBeforeDate = allGoodsReceipts.filter((gr) => {
-          try {
-            const receiptDate = new Date(gr.receiptDate);
-            return receiptDate < targetDate;
-          } catch {
-            return false;
-          }
-        });
-
-        const dispatchesBeforeDate = allDispatches.filter((d) => {
-          try {
-            const dispatchDate = new Date(d.dispatchDate);
-            return dispatchDate < targetDate;
-          } catch {
-            return false;
-          }
-        });
-
-        console.log(
-          `📦 Transactions BEFORE ${targetDate.toISOString().split("T")[0]}:`,
-        );
-        console.log(`  - Receipts BEFORE: ${receiptsBeforeDate.length}`);
-        console.log(`  - Dispatches BEFORE: ${dispatchesBeforeDate.length}`);
-
-        // ========== 2. DETAILED RECEIPT BREAKDOWN ==========
-        console.log("\n🔍 DETAILED RECEIPT BREAKDOWN:");
-        let receiptNumber = 1;
-        let receiptsValueBefore = 0;
-
-        for (const gr of receiptsBeforeDate) {
-          let receiptValue = 0;
-          const items = gr.receivedItems || [];
-
-          console.log(
-            `  ${receiptNumber}. ${gr.receiptNumber} (${gr.receiptDate}):`,
-          );
-
-          for (const item of items) {
-            const unitPrice = resolveUnitPrice(
-              item.unitPrice,
-              item.stockItem?.unitPrice,
-            );
-            const quantity = item.receivedQuantity || 0;
-            const val = quantity * unitPrice;
-            const itemName = item.stockItem?.name || "Unknown Item";
-
-            console.log(
-              `     - ${itemName}: ${quantity} × ${unitPrice.toFixed(2)} = ${val.toFixed(2)}`,
-            );
-            receiptValue += val;
-          }
-
-          console.log(`     SUBTOTAL: ${receiptValue.toFixed(2)}`);
-          receiptsValueBefore += receiptValue;
-          receiptNumber++;
-        }
-
-        // ========== 3. DETAILED DISPATCH BREAKDOWN ==========
-        console.log("\n🔍 DETAILED DISPATCH BREAKDOWN:");
-        let dispatchNumber = 1;
-        let dispatchesValueBefore = 0;
-
-        for (const d of dispatchesBeforeDate) {
-          const dispatchCostField = Number(d.totalCost || 0);
-          const itemCostSum = (d.dispatchedItems || []).reduce(
-            (itemSum: number, item: any) => {
-              const qty = Number(item.dispatchedQuantity || 0);
-              const unitPrice = resolveUnitPrice(
-                item.unitPrice,
-                item.stockItem?.unitPrice,
-              );
-              const itemCost = Number(item.totalCost || 0) || qty * unitPrice;
-              return itemSum + itemCost;
-            },
-            0,
-          );
-
-          // Prefer stored dispatch totalCost as source-of-truth, fallback to item cost sum
-          const dispatchValue =
-            dispatchCostField > 0 ? dispatchCostField : itemCostSum;
-
-          if (
-            dispatchCostField > 0 &&
-            Math.abs(dispatchCostField - itemCostSum) > 0.01
-          ) {
-            console.warn(
-              `⚠️ Dispatch ${d.dispatchNumber} cost mismatch: stored=${dispatchCostField.toFixed(2)}, itemSum=${itemCostSum.toFixed(2)}`,
-            );
-          }
-
-          console.log(
-            `  ${dispatchNumber}. ${d.dispatchNumber} (${d.dispatchDate}):`,
-          );
-          (d.dispatchedItems || []).forEach((item: any) => {
-            const itemName = item.stockItem?.name || "Unknown Item";
-            const qty = item.dispatchedQuantity || 0;
-            const unitPrice = resolveUnitPrice(
-              item.unitPrice,
-              item.stockItem?.unitPrice,
-            );
-            const itemCost = Number(item.totalCost || 0) || qty * unitPrice;
-            const displayPrice = qty > 0 ? itemCost / qty : unitPrice;
-            console.log(
-              `     - ${itemName}: ${qty} × ${displayPrice.toFixed(2)} = ${itemCost.toFixed(2)}`,
-            );
-          });
-
-          console.log(`     SUBTOTAL: ${dispatchValue.toFixed(2)}`);
-          dispatchesValueBefore += dispatchValue;
-          dispatchNumber++;
-        }
-
-        // ========== 4. SUMMARY OF VALUES ==========
-        console.log("\n💰 Transaction values BEFORE date:", {
-          receiptsValueBefore: receiptsValueBefore.toFixed(2),
-          dispatchesValueBefore: dispatchesValueBefore.toFixed(2),
-          netValue: (receiptsValueBefore - dispatchesValueBefore).toFixed(2),
-        });
-
-        // ========== 5. INVENTORY COUNT OVERRIDE ==========
-        // If a physical count was provided for the period, use it as the
-        // authoritative baseline rather than the computed movement total.
-        if (inventoryCounts && Object.keys(inventoryCounts).length > 0) {
-          const countBaseline = Object.values(inventoryCounts).reduce(
-            (s, v) => s + v,
-            0,
-          );
-          console.log(
-            "📋 Using inventory count baseline:",
-            countBaseline.toFixed(2),
-          );
-          return Math.max(0, countBaseline);
-        }
-
-        // ========== 6. STANDARD FORMULA ==========
-        // opening = receipts_before − dispatches_before ± net transfers in/out
-        // of the filtered site before the target date (transfers only move
-        // stock between bins/sites — they must be included so a single
-        // site's opening value reflects stock actually transferred in/out,
-        // not just what it purchased/dispatched directly).
-        const transfersBeforeDate = (allTransfers || []).filter((t: any) => {
-          try {
-            return new Date(t.transferDate) <= targetDate;
-          } catch {
-            return false;
-          }
-        });
-        const netTransferValueBefore = computeNetTransferValue(
-          transfersBeforeDate,
-          filterSiteId,
-        );
-        if (netTransferValueBefore !== 0) {
-          console.log(
-            "🔁 Net transfer value before date (site-scoped):",
-            netTransferValueBefore.toFixed(2),
-          );
-        }
-
-        const openingStock =
-          receiptsValueBefore - dispatchesValueBefore + netTransferValueBefore;
-
-        console.log("✅ FINAL Opening stock:", {
-          receiptsBeforeValue: receiptsValueBefore.toFixed(2),
-          dispatchesBeforeValue: dispatchesValueBefore.toFixed(2),
-          openingStock: openingStock.toFixed(2),
-        });
-
-        if (openingStock < 0) {
-          console.warn(
-            "⚠️ Opening stock is negative – check for missing receipts or cross-site dispatches.",
-          );
-        }
-
-        return Math.max(0, openingStock);
-      } catch (error) {
-        console.error("❌ Error in opening stock:", error);
-        return 0;
-      }
-    },
-    [],
+    [dateRangeMemo],
   );
 
   // ========== CORRECTED PROCESS ANALYTICS DATA ==========
@@ -1607,196 +905,59 @@ export default function ComprehensiveReportsPage() {
         const periodPOs = filterDataByDateRange(purchaseOrders, "orderDate");
 
         // USE FILTERED DATA IF PROVIDED, OTHERWISE USE RAW DATA
+        // Only documents that actually moved stock feed the report (see
+        // isEffective* in lib/financialReport).
         const periodGoodsReceipts = filterDataByDateRange(
-          filteredGoodsReceipts || goodsReceipts,
+          (filteredGoodsReceipts || goodsReceipts).filter(isEffectiveReceipt),
           "receiptDate",
         );
         const periodDispatches = filterDataByDateRange(
-          filteredDispatches || dispatches,
+          (filteredDispatches || dispatches).filter(isEffectiveDispatch),
           "dispatchDate",
         );
-        const periodBinCounts = filterDataByDateRange(binCounts, "countDate");
+        const periodBinCounts = filterDataByDateRange(
+          binCounts.filter(isEffectiveCount),
+          "countDate",
+        );
 
-        // 1. Build inventory-counts baseline from physical counts done on or before the period start.
-        //    This lets a recent bin-count reset the opening-stock figure rather than relying
-        //    purely on movement history, which may have gaps.
-        const inventoryCountsMap: Record<string, number> = {};
-        if (binCounts && binCounts.length > 0) {
-          // Get all counts that fall on or before the period start date
-          const countsBeforeStart = binCounts.filter((count: any) => {
-            try {
-              return new Date(count.countDate) <= dateRange.start;
-            } catch {
-              return false;
-            }
-          });
-
-          // Sort descending so the MOST RECENT count comes first
-          countsBeforeStart.sort(
-            (a: any, b: any) =>
-              new Date(b.countDate).getTime() - new Date(a.countDate).getTime(),
-          );
-
-          countsBeforeStart.forEach((count: any) => {
-            count.countedItems?.forEach((item: any) => {
-              const itemId = item.stockItem?._id;
-              const unitPrice =
-                item.stockItem?.unitPrice || item.unitPrice || 0;
-              const countedQty =
-                item.countedQuantity ?? item.physicalCount ?? 0;
-              // Only record the first (most recent) count found for each item
-              if (itemId && !(itemId in inventoryCountsMap)) {
-                inventoryCountsMap[itemId] = countedQty * unitPrice;
+        // 1. Effective documents only: drafts, cancelled and unfinished
+        //    receipts/dispatches never moved stock, so they are not income,
+        //    cost or input VAT. computeFinancials() is a single, unit-tested
+        //    ledger: opening = everything before the period, so opening stock
+        //    always equals the previous period's closing stock.
+        const fin = computeFinancials({
+          receipts: filteredGoodsReceipts || goodsReceipts,
+          dispatches: filteredDispatches || dispatches,
+          counts: binCounts,
+          transfers,
+          range: dateRange,
+          siteId: filterSiteId,
+          liveInventoryValue: stockValues?.summary?.totalInventoryValue,
+          anchor: anchorRef.current
+            ? {
+                kind: anchorRef.current.kind,
+                asOf: new Date(anchorRef.current.asOf),
+                value: anchorRef.current.value,
+                recordedAt: anchorRef.current.recordedAt
+                  ? new Date(anchorRef.current.recordedAt)
+                  : null,
               }
-            });
-          });
+            : null,
+        });
 
-          if (Object.keys(inventoryCountsMap).length > 0) {
-            console.log(
-              `📋 Found ${Object.keys(inventoryCountsMap).length} items with physical counts before period start`,
-            );
-          }
-        }
-
-        // 2. Calculate opening stock — physical count baseline takes priority
-        setCalculatingOpeningStock(true);
-
-        const openingStockValue = await calculateOpeningStockForDate(
-          dateRange.start,
-          filteredGoodsReceipts || goodsReceipts,
-          filteredDispatches || dispatches,
-          Object.keys(inventoryCountsMap).length > 0
-            ? inventoryCountsMap
-            : undefined,
-          transfers,
-          filterSiteId,
-        );
-
-        setCalculatingOpeningStock(false);
-
-        // 2. PERIOD PURCHASES = Goods receipts in the period
-        const periodPurchasesExclVAT = periodGoodsReceipts.reduce(
-          (sum: number, gr: any) => {
-            const receiptValue =
-              gr.receivedItems?.reduce((itemSum: number, item: any) => {
-                const unitPrice =
-                  item.unitPrice || item.stockItem?.unitPrice || 0;
-                const receivedQuantity = item.receivedQuantity || 0;
-                return itemSum + receivedQuantity * unitPrice;
-              }, 0) || 0;
-            return sum + receiptValue;
-          },
-          0,
-        );
-
-        // 3. PERIOD CONSUMPTION = Dispatch costs in the period (PREFER STORED totalCost)
-        const periodDispatchesTotalCost = periodDispatches.reduce(
-          (sum: number, d: any) => sum + (Number(d.totalCost) || 0),
-          0,
-        );
-
-        const periodDispatchesCostFromItems = periodDispatches.reduce(
-          (sum: number, d: any) => {
-            const itemCost =
-              d.dispatchedItems?.reduce((itemSum: number, item: any) => {
-                const itemCostExclVAT =
-                  Number(item.totalCost) ||
-                  Number(item.dispatchedQuantity || 0) *
-                    Number(item.unitPrice || 0);
-                return itemSum + itemCostExclVAT;
-              }, 0) || 0;
-            return sum + itemCost;
-          },
-          0,
-        );
-
-        if (
-          Math.abs(periodDispatchesTotalCost - periodDispatchesCostFromItems) >
-          0.01
-        ) {
-          console.warn(
-            `⚠️ Period dispatch cost mismatch: stored=${periodDispatchesTotalCost.toFixed(
-              2,
-            )}, items=${periodDispatchesCostFromItems.toFixed(2)}`,
-          );
-        }
-
-        const periodConsumptionExclVAT = periodDispatchesTotalCost;
-
-        // 4. SALES = Prefer stored totalSales, fallback to people fed × selling price
-        const periodSalesExclVAT = periodDispatches.reduce(
-          (sum: number, d: any) => {
-            const storedSales = Number(d.totalSales || 0);
-            if (storedSales > 0) {
-              return sum + storedSales;
-            }
-            const sellingPriceExclVAT =
-              Number(d.dispatchType?.sellingPrice) ||
-              Number(d.sellingPrice) ||
-              0;
-            const peopleFed = Number(d.peopleFed) || 0;
-            return sum + sellingPriceExclVAT * peopleFed;
-          },
-          0,
-        );
-
-        // 5. VAT calculations – single source of truth
-        // vatAmount on GR / PO is pre-computed by calculateGoodsReceiptVAT /
-        // calculatePurchaseOrderVAT. We sum ONLY vatAmount – NOT totalWithVAT –
-        // to avoid double-counting.
-        const vatOnPurchases = periodGoodsReceipts.reduce(
-          (sum: number, gr: any) => sum + (Number(gr.vatAmount) || 0),
-          0,
-        );
-
-        // For sales VAT: use pre-computed salesVAT field; fall back to rate × excl. amount.
-        const periodDispatchesSalesVAT = periodDispatches.reduce(
-          (sum: number, d: any) => sum + (Number(d.salesVAT) || 0),
-          0,
-        );
-        const vatOnSales =
-          periodDispatchesSalesVAT > 0
-            ? periodDispatchesSalesVAT
-            : Math.round(periodSalesExclVAT * VAT_CONFIG.rate * 100) / 100;
-
-        const netVATPayable = vatOnSales - vatOnPurchases;
-
-        // 6. PROFIT CALCULATIONS
-        const COGS = periodConsumptionExclVAT;
-        const grossProfitBeforeVAT = periodSalesExclVAT - COGS;
-
-        // 7. Calculate net variances from bin counts
-        const netVariancesValue = periodBinCounts.reduce(
-          (sum: number, count: any) =>
-            sum +
-            (count.countedItems?.reduce((itemSum: number, item: any) => {
-              const varianceValue =
-                (item.variance || 0) * (item.stockItem?.unitPrice || 0);
-              return itemSum + varianceValue;
-            }, 0) || 0),
-          0,
-        );
-
-        // 7b. Net transfer value in/out of the filtered site during the
-        // period itself (opening stock already accounts for transfers
-        // BEFORE the period start — this covers transfers that happened
-        // DURING it, same reasoning as periodPurchases/periodConsumption).
-        const periodTransfers = filterDataByDateRange(
-          transfers,
-          "transferDate",
-        );
-        const netTransferValuePeriod = computeNetTransferValue(
-          periodTransfers,
-          filterSiteId,
-        );
-
-        // 8. Calculate closing stock value
-        const closingStockValue =
-          openingStockValue +
-          periodPurchasesExclVAT -
-          periodConsumptionExclVAT +
-          netVariancesValue +
-          netTransferValuePeriod;
+        const openingStockValue = fin.openingStock;
+        const periodPurchasesExclVAT = fin.periodPurchases;
+        const periodDispatchesTotalCost = fin.periodConsumption;
+        const periodConsumptionExclVAT = fin.periodConsumption;
+        const periodSalesExclVAT = fin.periodSales;
+        const vatOnPurchases = fin.vatOnPurchases;
+        const periodDispatchesSalesVAT = fin.vatOnSales;
+        const vatOnSales = fin.vatOnSales;
+        const netVATPayable = fin.netVATPayable;
+        const COGS = fin.periodConsumption;
+        const grossProfitBeforeVAT = fin.grossProfit;
+        const netVariancesValue = fin.netVariances;
+        const closingStockValue = fin.closingStock;
 
         // 9. Net profit. periodSalesExclVAT and COGS are both already
         // VAT-exclusive, so grossProfitBeforeVAT never contained VAT in the
@@ -2301,6 +1462,9 @@ export default function ComprehensiveReportsPage() {
             netVATPayable,
             grossProfitBeforeVAT: grossProfitBeforeVAT,
             grossProfitAfterVAT: netProfit,
+            netTransfers: fin.netTransfers,
+            integrity: fin.integrity,
+            excluded: fin.excluded,
           },
           suppliers: {
             performance: supplierPerformance,
@@ -2351,7 +1515,7 @@ export default function ComprehensiveReportsPage() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filterDataByDateRange, calculateOpeningStockForDate, toast],
+    [filterDataByDateRange, toast],
   );
 
   // Add this helper function to get stock values filtered by site
@@ -2588,11 +1752,76 @@ export default function ComprehensiveReportsPage() {
     ],
   );
 
+  // Fast path: the server computes the financial summary next to the data
+  // (~1 KB) and tells us which period close / opening balance anchors it.
+  const fetchServerFinancials = useCallback(
+    async (siteId: string | null): Promise<boolean> => {
+      try {
+        const qs = new URLSearchParams({
+          start: primaryDateRange.start,
+          end: primaryDateRange.end,
+        });
+        if (siteId) qs.set("site", siteId);
+        const res = await fetch(`/api/reports/financials?${qs.toString()}`);
+        if (!res.ok) throw new Error(`financials responded ${res.status}`);
+        const body = await res.json();
+        anchorRef.current = body.anchor ?? null;
+        setServerAnchor(body.anchor ?? null);
+        setServerFin(toSummaryShape(body));
+        return true;
+      } catch (error) {
+        console.warn("Server financial summary unavailable:", error);
+        anchorRef.current = null;
+        setServerAnchor(null);
+        setServerFin(null);
+        return false;
+      }
+    },
+    [primaryDateRange.start, primaryDateRange.end],
+  );
+
+  // Shape the stored raw documents into what processFilteredAnalyticsData expects.
+  const buildProcessInput = useCallback(
+    (raw: { [key: string]: any[] }) => ({
+      purchaseOrders: raw.purchaseOrders || [],
+      goodsReceipts: raw.goodsReceipts || [],
+      dispatches: raw.dispatches || [],
+      transfers: raw.transfers || [],
+      binCounts: raw.binCounts || [],
+      stockItems: raw.stockItems || [],
+      stockValues: {
+        items: raw.stockItems || [],
+        summary: {
+          totalInventoryValue: (raw.stockItems || []).reduce(
+            (sum: number, item: any) =>
+              sum + (item.currentStock || 0) * (item.unitPrice || 0),
+            0,
+          ),
+          totalVAT: (raw.stockItems || []).reduce(
+            (sum: number, item: any) => sum + (item.stockVAT || 0),
+            0,
+          ),
+        },
+      },
+      lowStock: raw.lowStock || [],
+      suppliers: raw.suppliers || [],
+      users: raw.users || [],
+      sites: raw.sites || [],
+    }),
+    [],
+  );
+
   // Enhanced fetchAllData function - CLIENT-SIDE FILTERING VERSION
   const fetchAllData = useCallback(
-    async (forceRefresh = false) => {
+    async (forceRefresh = false, silent = false) => {
+      // Latest request wins: a slow earlier load must not overwrite the
+      // result for the period/site the user has since switched to.
+      const seq = ++loadSeqRef.current;
       setAnalyticsLoading(true);
       setAnalyticsError(null); // Clear any previous error immediately
+      setLoadErrors([]);
+      // Start the fast summary immediately; the full download continues below.
+      const finPromise = fetchServerFinancials(selectedFilterSite);
       try {
         console.log(
           "🔄 Starting comprehensive data fetch for analytics with VAT...",
@@ -2603,8 +1832,9 @@ export default function ComprehensiveReportsPage() {
           },
         );
 
-        // Clear existing data if forcing refresh
-        if (forceRefresh) {
+        // Clear existing data if forcing refresh (a silent background
+        // revalidation keeps showing the current numbers instead)
+        if (forceRefresh && !silent) {
           setRawData({});
           setAnalyticsData(null);
         }
@@ -2612,6 +1842,7 @@ export default function ComprehensiveReportsPage() {
         // Check if we already have data and don't force refresh
         if (!forceRefresh && Object.keys(rawData).length > 0 && analyticsData) {
           console.log("📊 Using cached data, skipping fetch");
+          await finPromise;
           setAnalyticsLoading(false);
           return;
         }
@@ -2652,18 +1883,42 @@ export default function ComprehensiveReportsPage() {
           endpoints.map((e) => e.split("?")[0]),
         );
 
+        const sourceNames = [
+          "purchase orders",
+          "goods receipts",
+          "dispatches",
+          "transfers",
+          "bin counts",
+          "stock values",
+          "low stock",
+          "suppliers",
+          "users",
+          "sites",
+        ];
+        let settled = 0;
+        setLoadProgress({ done: 0, total: endpoints.length });
         const results = await Promise.allSettled(
           endpoints.map(async (endpoint) => {
-            console.log(`📡 Fetching from ${endpoint.split("?")[0]}...`);
-            const response = await fetch(endpoint);
-            if (!response.ok) {
-              throw new Error(
-                `Failed to fetch ${endpoint}: ${response.status}`,
-              );
+            try {
+              console.log(`📡 Fetching from ${endpoint.split("?")[0]}...`);
+              const response = await fetch(endpoint);
+              if (!response.ok) {
+                throw new Error(
+                  `Failed to fetch ${endpoint}: ${response.status}`,
+                );
+              }
+              return await response.json();
+            } finally {
+              settled += 1;
+              setLoadProgress({ done: settled, total: endpoints.length });
             }
-            return response.json();
           }),
         );
+        if (seq !== loadSeqRef.current) return; // superseded
+        const failedSources = results.flatMap((r, i) =>
+          r.status === "rejected" ? [sourceNames[i]] : [],
+        );
+        setLoadErrors(failedSources);
 
         // Process results with error handling
         const [
@@ -2749,7 +2004,18 @@ export default function ComprehensiveReportsPage() {
         };
 
         setRawData(newRawData);
+        if (failedSources.length === 0) {
+          rawDataCache = {
+            userId: String(session?.user?.id || ""),
+            at: Date.now(),
+            data: newRawData,
+          };
+        }
         console.log("✅ All raw data stored with VAT calculations");
+
+        // The calculation needs the period anchor; the fast summary request
+        // started at the top has normally finished long before this point.
+        await finPromise;
 
         // Process analytics data WITH CLIENT-SIDE FILTERING
         await processFilteredAnalyticsData(
@@ -2779,27 +2045,10 @@ export default function ComprehensiveReportsPage() {
           selectedFilterSite, // Pass the selected filter site
         );
 
-        // Show success message with site context
-        let successMessage = "Data loaded successfully";
-        if (!userSiteInfo.canAccessMultipleSites && userSiteInfo.userSiteName) {
-          successMessage = `Loaded data for ${userSiteInfo.userSiteName}`;
-        } else if (selectedFilterSite) {
-          const siteName = availableSites.find(
-            (s) => s._id === selectedFilterSite,
-          )?.name;
-          successMessage = `Loaded data for ${siteName || "selected site"} (client-side filtered)`;
-        } else {
-          successMessage = "Loaded all sites data";
-        }
-
+        // No success toast: the period bar shows "Updated HH:mm" instead, so
+        // nothing covers the numbers that were just loaded.
         setAnalyticsError(null);
-        toast({
-          title: "Success",
-          description: successMessage,
-          status: "success",
-          duration: 3000,
-          isClosable: true,
-        });
+        setLastUpdated(new Date());
       } catch (error) {
         console.error("❌ Error fetching analytics data:", error);
         const msg =
@@ -2807,118 +2056,66 @@ export default function ComprehensiveReportsPage() {
             ? error.message
             : "Failed to load analytics data from server";
         setAnalyticsError(msg);
-        toast({
-          title: "Error Loading Data",
-          description: msg,
-          status: "error",
-          duration: 5000,
-          isClosable: true,
-        });
       } finally {
-        setAnalyticsLoading(false);
+        if (seq === loadSeqRef.current) {
+          setAnalyticsLoading(false);
+          setLoadProgress(null);
+        }
       }
     },
     [
       toast,
+      fetchServerFinancials,
+      session,
       rawData,
       analyticsData,
       dateRangeMemo,
-      calculatePurchaseOrderVAT,
-      calculateGoodsReceiptVAT,
-      calculateDispatchVAT,
-      calculateInventoryVAT,
       processFilteredAnalyticsData,
       userSiteInfo,
       selectedFilterSite,
-      availableSites,
       primaryDateRange.start,
       primaryDateRange.end,
     ],
   );
 
-  // Simplified function for site filtering - optimized to use cached data
-  const fetchWithSiteFilter = useCallback(
-    async (siteId: string) => {
-      setAnalyticsLoading(true);
-      try {
-        console.log("🔄 Applying client-side site filter:", siteId);
-
-        const siteName =
-          availableSites.find((s) => s._id === siteId)?.name || "selected site";
-
-        // Check if we have raw data to filter
-        if (Object.keys(rawData).length === 0) {
-          console.log("⚠️ No raw data available, fetching all data first...");
-          await fetchAllData(true);
-        } else {
-          // OPTIMIZED: Use skipAnalytics=true to avoid heavy recalculations
-          await processFilteredAnalyticsData(
-            {
-              purchaseOrders: rawData.purchaseOrders || [],
-              goodsReceipts: rawData.goodsReceipts || [],
-              dispatches: rawData.dispatches || [],
-              transfers: rawData.transfers || [],
-              binCounts: rawData.binCounts || [],
-              stockItems: rawData.stockItems || [], // Make sure this is included
-              stockValues: {
-                items: rawData.stockItems || [],
-                summary: {
-                  totalInventoryValue: (rawData.stockItems || []).reduce(
-                    (sum: number, item: any) =>
-                      sum + (item.currentStock || 0) * (item.unitPrice || 0),
-                    0,
-                  ),
-                  totalVAT: (rawData.stockItems || []).reduce(
-                    (sum: number, item: any) => sum + (item.stockVAT || 0),
-                    0,
-                  ),
-                },
-              },
-              lowStock: rawData.lowStock || [],
-              suppliers: rawData.suppliers || [],
-              users: rawData.users || [],
-              sites: rawData.sites || [],
-            },
-            dateRangeMemo,
-            siteId,
-            true, // Skip full analytics processing - use fast path
-          );
-        }
-
-        toast({
-          title: "Filter Applied",
-          description: `Showing data for: ${siteName}`,
-          status: "success",
-          duration: 2000, // Shorter duration for better UX
-          isClosable: true,
-        });
-      } catch (error) {
-        console.error("❌ Error applying site filter:", error);
-        toast({
-          title: "Filter Error",
-          description: "Failed to apply site filter",
-          status: "error",
-          duration: 5000,
-          isClosable: true,
-        });
-      } finally {
-        setAnalyticsLoading(false);
-      }
-    },
-    [
-      rawData,
-      dateRangeMemo,
-      availableSites,
-      fetchAllData,
-      processFilteredAnalyticsData,
-      toast,
-    ],
-  );
 
   const handleUpdateAnalytics = () => {
     // Always fetch fresh data when manually updating
     fetchAllData(true);
   };
+
+  // Documents behind a tapped figure, scoped to the selected site and period.
+  const drillRows = useMemo(() => {
+    if (!drill) return [];
+    return buildDrillRows(drill.kind, {
+      receipts: filterDataBySite(
+        rawData.goodsReceipts || [],
+        selectedFilterSite,
+        "goodsReceipt",
+      ),
+      dispatches: filterDataBySite(
+        rawData.dispatches || [],
+        selectedFilterSite,
+        "dispatch",
+      ),
+      counts: filterDataBySite(
+        rawData.binCounts || [],
+        selectedFilterSite,
+        "binCount",
+      ),
+      range: dateRangeMemo,
+    });
+  }, [drill, rawData, selectedFilterSite, dateRangeMemo]);
+
+  const reconciliationRows = useMemo(() => {
+    if (!reconcileOpen) return [];
+    return buildReconciliation({
+      receipts: rawData.goodsReceipts || [],
+      dispatches: rawData.dispatches || [],
+      counts: rawData.binCounts || [],
+      stockItems: rawData.stockItems || [],
+    });
+  }, [reconcileOpen, rawData]);
 
   // Smart auto-fit columns function that calculates optimal widths
   const autoFitColumns = (worksheet: any) => {
@@ -3022,6 +2219,7 @@ export default function ComprehensiveReportsPage() {
       ["", ""],
 
       // EXECUTIVE SUMMARY SECTION
+      ...buildIntegrityRows(analyticsData?.financial, serverAnchor),
       ["EXECUTIVE SUMMARY", ""],
       ["", ""],
       [
@@ -3078,6 +2276,7 @@ export default function ComprehensiveReportsPage() {
   }, [
     primaryDateRange,
     analyticsData,
+    serverAnchor,
     userSiteInfo,
     availableSites,
     selectedFilterSite,
@@ -3160,6 +2359,7 @@ export default function ComprehensiveReportsPage() {
       ["", ""],
 
       // FINANCIAL METRICS SECTION - UPDATED WITH PERIOD-BASED CALCULATIONS AND VAT
+      ...buildIntegrityRows(analyticsData?.financial, serverAnchor),
       ["FINANCIAL PERFORMANCE METRICS", ""],
       ["", ""],
       ["Opening Stock Value", analyticsData?.financial.openingStock || 0],
@@ -3184,7 +2384,7 @@ export default function ComprehensiveReportsPage() {
       ["VAT Rate", `${VAT_CONFIG.ratePercentage}% (Eswatini)`],
       ["", ""],
     ];
-  }, [primaryDateRange, analyticsData]);
+  }, [primaryDateRange, analyticsData, serverAnchor]);
 
   // Helper function to create formatted Sales Summary with VAT
   const createFormattedSalesSummaryData = useCallback(
@@ -3457,6 +2657,10 @@ export default function ComprehensiveReportsPage() {
     setExportLoading(true);
     try {
       console.log("📊 Starting comprehensive Excel export with VAT...");
+      const [XLSX, { saveAs }] = await Promise.all([
+        import("xlsx"),
+        import("file-saver"),
+      ]);
 
       // Validate we have data before exporting
       const hasData =
@@ -4054,9 +3258,6 @@ export default function ComprehensiveReportsPage() {
     [
       filterReportData,
       toast,
-      calculatePurchaseOrderVAT,
-      calculateGoodsReceiptVAT,
-      calculateDispatchVAT,
     ],
   );
 
@@ -4271,9 +3472,6 @@ export default function ComprehensiveReportsPage() {
   }, [
     reportConfigs,
     toast,
-    calculatePurchaseOrderVAT,
-    calculateGoodsReceiptVAT,
-    calculateDispatchVAT,
   ]);
 
   // Helper to get nested object values
@@ -4309,18 +3507,134 @@ export default function ComprehensiveReportsPage() {
     }
   }, [currentReport, fetchReportData, status, userSiteInfo]); // Add userSiteInfo here
 
-  // Auto-load data on mount and when date range changes
-  // Auto-load data on mount and when date range changes
+  // ── Deep links: ?tab=charts&from=2026-10-01&to=2026-10-04&site=<id> ──
   useEffect(() => {
-    if (status === "authenticated" && activeTab === 0) {
-      const timer = setTimeout(() => {
-        console.log("🔍 Loading analytics data with VAT on mount...");
-        fetchAllData();
-      }, 500);
-
-      return () => clearTimeout(timer);
+    try {
+      const q = new URLSearchParams(window.location.search);
+      const tab = TAB_KEYS.indexOf(q.get("tab") as (typeof TAB_KEYS)[number]);
+      if (tab >= 0) setAnalyticsTab(tab);
+      const from = q.get("from");
+      const to = q.get("to");
+      const isDate = (v: string | null): v is string =>
+        !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+      if (isDate(from) && isDate(to) && from <= to) {
+        setPrimaryDateRange({ start: from, end: to });
+      }
+      const site = q.get("site");
+      if (site) setSelectedFilterSite(site);
+    } catch {
+      /* ignore malformed query strings */
     }
-  }, [status, activeTab, fetchAllData]); // Remove userSiteInfo dependency // Add userSiteInfo here
+    setUrlReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!urlReady) return;
+    try {
+      const q = new URLSearchParams();
+      q.set("tab", TAB_KEYS[analyticsTab] || TAB_KEYS[0]);
+      q.set("from", primaryDateRange.start);
+      q.set("to", primaryDateRange.end);
+      if (selectedFilterSite) q.set("site", selectedFilterSite);
+      window.history.replaceState(null, "", `?${q.toString()}`);
+    } catch {
+      /* history API unavailable */
+    }
+  }, [
+    urlReady,
+    analyticsTab,
+    primaryDateRange.start,
+    primaryDateRange.end,
+    selectedFilterSite,
+  ]);
+
+  // Re-run the calculation from the documents already in memory when the
+  // period or site changes. (Previously a cached load returned early, so
+  // changing the dates left the numbers of the old period on screen.)
+  const reprocess = useCallback(
+    async (siteId: string | null) => {
+      if (Object.keys(rawData).length === 0) {
+        await fetchAllData(true);
+        return;
+      }
+      setAnalyticsLoading(true);
+      try {
+        await fetchServerFinancials(siteId);
+        await processFilteredAnalyticsData(
+          buildProcessInput(rawData),
+          dateRangeMemo,
+          siteId,
+        );
+        setLastUpdated(new Date());
+      } catch (error) {
+        setAnalyticsError(
+          error instanceof Error ? error.message : "Failed to update the report",
+        );
+      } finally {
+        setAnalyticsLoading(false);
+      }
+    },
+    [
+      rawData,
+      fetchAllData,
+      fetchServerFinancials,
+      processFilteredAnalyticsData,
+      buildProcessInput,
+      dateRangeMemo,
+    ],
+  );
+  const reprocessRef = useRef(reprocess);
+  useEffect(() => {
+    reprocessRef.current = reprocess;
+  }, [reprocess]);
+
+  // First load: show cached numbers instantly (stale-while-revalidate), else fetch.
+  useEffect(() => {
+    if (status !== "authenticated" || activeTab !== 0 || !urlReady) return;
+    if (initialLoadRef.current) return;
+    const timer = setTimeout(async () => {
+      initialLoadRef.current = true;
+      lastScopeRef.current = `${primaryDateRange.start}|${primaryDateRange.end}|${selectedFilterSite || ""}`;
+      const cached =
+        rawDataCache &&
+        rawDataCache.userId === String(session?.user?.id || "") &&
+        Date.now() - rawDataCache.at < RAW_CACHE_TTL_MS
+          ? rawDataCache
+          : null;
+      if (cached) {
+        setRawData(cached.data);
+        setLastUpdated(new Date(cached.at));
+        await fetchServerFinancials(selectedFilterSite);
+        await processFilteredAnalyticsData(
+          buildProcessInput(cached.data),
+          dateRangeMemo,
+          selectedFilterSite,
+        );
+        fetchAllData(true, true); // revalidate quietly
+      } else {
+        fetchAllData();
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [status, activeTab, urlReady, fetchAllData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Period or site changed after the first load
+  useEffect(() => {
+    if (status !== "authenticated" || activeTab !== 0 || !initialLoadRef.current) return;
+    const key = `${primaryDateRange.start}|${primaryDateRange.end}|${selectedFilterSite || ""}`;
+    if (key === lastScopeRef.current) return;
+    const timer = setTimeout(() => {
+      lastScopeRef.current = key;
+      reprocessRef.current(selectedFilterSite);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [
+    primaryDateRange.start,
+    primaryDateRange.end,
+    selectedFilterSite,
+    status,
+    activeTab,
+  ]);
 
   // Get user site info from session
   useEffect(() => {
@@ -4348,6 +3662,7 @@ export default function ComprehensiveReportsPage() {
         canAccessMultipleSites,
         userSiteName,
       });
+      if (!canAccessMultipleSites) setSelectedFilterSite(null);
     }
   }, [session]); // session is available from useSession() hook
 
@@ -4501,12 +3816,18 @@ export default function ComprehensiveReportsPage() {
     return String(value);
   };
 
+  // Role-based view: finance roles see VAT, reconciliation and (admins) period
+  // close; operational roles see sales, cost and stock only. The API enforces
+  // the same rules - this only hides controls.
+  const showFinance = canViewFinance(userSiteInfo.userRole);
+  const showReconcile =
+    canViewReconciliation(userSiteInfo.userRole) &&
+    userSiteInfo.canAccessMultipleSites &&
+    !selectedFilterSite;
+  const canManage = canManagePeriods(userSiteInfo.userRole);
+
   return (
-    <Box
-      opacity={analyticsLoading ? 0.6 : 1}
-      pointerEvents={analyticsLoading ? "none" : "auto"}
-      transition="opacity 0.2s ease-in-out"
-    >
+    <Box>
       <Box p={{ base: 4, md: 8 }} bg={bgPrimary} minH="100vh">
         <VStack spacing={6} align="stretch">
           {/* Header */}
@@ -4526,169 +3847,47 @@ export default function ComprehensiveReportsPage() {
                 Analytics & Reports
               </Heading>
               <Text color={secondaryTextColor}>
-                Comprehensive analytics and exportable reports with VAT
-                calculations (Eswatini 15%)
+                Sales, cost, stock and VAT (Eswatini {VAT_CONFIG.ratePercentage}%)
               </Text>
             </Box>
 
             <HStack spacing={3}>
-              <Button
-                leftIcon={<FiRefreshCw />}
-                onClick={() => fetchAllData(true)}
-                isLoading={analyticsLoading}
-                variant="outline"
-              >
-                Refresh Data
-              </Button>
               {activeTab === 0 && (
                 <Button
                   leftIcon={<FiDownload />}
                   colorScheme="green"
                   onClick={exportToExcel}
                   isLoading={exportLoading}
-                  size="lg"
+                  isDisabled={loadErrors.length > 0 || !analyticsData}
+                  title={
+                    loadErrors.length > 0
+                      ? "Disabled: some data failed to load, so the export would be incomplete"
+                      : undefined
+                  }
+                  size={{ base: "md", md: "lg" } as any}
                 >
-                  Export Full Report with VAT
+                  Export report
                 </Button>
               )}
             </HStack>
           </Flex>
 
-          {/* VAT Rate Display */}
-          <Card bg={bgCard} borderColor="blue.200">
-            <CardBody>
-              <HStack justify="space-between">
-                <HStack>
-                  <Icon as={FiPercent} color="blue.500" />
-                  <VStack align="start" spacing={0}>
-                    <Text fontWeight="bold" color="blue.700">
-                      VAT Rate Applied
-                    </Text>
-                    <Text color="blue.600">
-                      Eswatini Standard Rate: {VAT_CONFIG.ratePercentage}%
-                    </Text>
-                  </VStack>
-                </HStack>
-                <Badge colorScheme="blue" fontSize="lg" p={2}>
-                  VAT {VAT_CONFIG.ratePercentage}%
-                </Badge>
-              </HStack>
-            </CardBody>
-          </Card>
-
-          {/* Site Info Banner */}
-          <Card
-            borderColor={
-              userSiteInfo.canAccessMultipleSites ? "blue.200" : "green.200"
-            }
-          >
-            <CardBody py={3}>
-              <HStack justify="space-between">
-                <HStack>
-                  <Icon
-                    as={userSiteInfo.canAccessMultipleSites ? FiEye : FiEyeOff}
-                    color={
-                      userSiteInfo.canAccessMultipleSites
-                        ? "blue.500"
-                        : "green.500"
-                    }
-                  />
-                  <VStack align="start" spacing={0}>
-                    <Text
-                      fontWeight="bold"
-                      color={
-                        userSiteInfo.canAccessMultipleSites
-                          ? "blue.700"
-                          : "green.700"
-                      }
-                    >
-                      {userSiteInfo.canAccessMultipleSites
-                        ? "Multi-Site View"
-                        : "Single-Site View"}
-                    </Text>
-                    <Text
-                      color={
-                        userSiteInfo.canAccessMultipleSites
-                          ? "blue.600"
-                          : "green.600"
-                      }
-                      fontSize="sm"
-                    >
-                      {userSiteInfo.canAccessMultipleSites
-                        ? "You have access to all sites data"
-                        : `Showing data for: ${userSiteInfo.userSiteName || "your assigned site"}`}
-                    </Text>
-                  </VStack>
-                </HStack>
-                {!userSiteInfo.canAccessMultipleSites &&
-                  userSiteInfo.userSiteName && (
-                    <Badge colorScheme="green" fontSize="md" p={2}>
-                      {userSiteInfo.userSiteName}
-                    </Badge>
-                  )}
-                {userSiteInfo.canAccessMultipleSites && (
-                  <Badge colorScheme="blue" fontSize="md" p={2}>
-                    Role: {userSiteInfo.userRole}
-                  </Badge>
-                )}
-              </HStack>
-            </CardBody>
-          </Card>
-
-          {/* Data Scope Summary */}
-          <Card borderColor="gray.200">
-            <CardBody py={2}>
-              <HStack spacing={4} wrap="wrap">
-                <HStack>
-                  <Icon as={FiFilter} color="gray.500" />
-                  <Text fontSize="sm" fontWeight="medium">
-                    Showing data for:
-                  </Text>
-                </HStack>
-
-                {selectedFilterSite ? (
-                  <Badge colorScheme="purple" fontSize="sm" px={3} py={1}>
-                    {availableSites.find((s) => s._id === selectedFilterSite)
-                      ?.name || "Selected Site"}
-                  </Badge>
-                ) : !userSiteInfo.canAccessMultipleSites ? (
-                  <Badge colorScheme="green" fontSize="sm" px={3} py={1}>
-                    {userSiteInfo.userSiteName || "Your Site"}
-                  </Badge>
-                ) : (
-                  <Badge colorScheme="blue" fontSize="sm" px={3} py={1}>
-                    All Sites
-                  </Badge>
-                )}
-
-                <Text fontSize="sm" color="gray.600">
-                  {primaryDateRange.start} to {primaryDateRange.end}
-                </Text>
-              </HStack>
-            </CardBody>
-          </Card>
-
-          {/* Quick Date Range Presets */}
-          <Card>
-            <CardBody>
-              <VStack align="start" spacing={4}>
-                <Text fontWeight="medium">Quick Date Ranges</Text>
-                <Wrap spacing={3}>
-                  {quickDateRanges.map((range, index) => (
-                    <Button
-                      key={index}
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setPrimaryDateRange(range)}
-                      isDisabled={analyticsLoading}
-                    >
-                      {range.label}
-                    </Button>
-                  ))}
-                </Wrap>
-              </VStack>
-            </CardBody>
-          </Card>
+          {/* Sticky period + site bar (replaces the VAT, site, scope and
+              quick-range cards, and the per-tab date inputs) */}
+          <PeriodBar
+            range={primaryDateRange}
+            onRangeChange={setPrimaryDateRange}
+            presets={quickDateRanges}
+            sites={availableSites}
+            selectedSite={selectedFilterSite}
+            onSiteChange={setSelectedFilterSite}
+            canPickSite={userSiteInfo.canAccessMultipleSites}
+            fixedSiteName={userSiteInfo.userSiteName}
+            lastUpdated={lastUpdated}
+            loading={analyticsLoading}
+            progress={loadProgress}
+            onRefresh={() => fetchAllData(true)}
+          />
 
           {/* Main Tabs - Analytics and Reports */}
           <Card bg={bgCard} border="1px" borderColor={borderColor}>
@@ -4698,24 +3897,30 @@ export default function ComprehensiveReportsPage() {
                 onChange={setAnalyticsTab}
                 colorScheme="brand"
                 index={analyticsTab}
+                // Tab bodies mount when first opened (charts are heavy) and
+                // stay mounted afterwards so switching back is instant.
+                isLazy
+                lazyBehavior="keepMounted"
               >
-                <TabList>
-                  <Tab>
+                <TabList overflowX="auto" overflowY="hidden" whiteSpace="nowrap">
+                  <Tab minH="44px">
                     <HStack spacing={2}>
                       <Icon as={FiTrendingUp} />
-                      <Text>Executive Dashboard</Text>
+                      <Text>
+                        Overview
+                      </Text>
                     </HStack>
                   </Tab>
-                  <Tab>
+                  <Tab minH="44px">
                     <HStack spacing={2}>
                       <Icon as={FiBarChart2} />
-                      <Text>Visual Analytics</Text>
+                      <Text>Charts</Text>
                     </HStack>
                   </Tab>
-                  <Tab>
+                  <Tab minH="44px">
                     <HStack spacing={2}>
                       <Icon as={FiDownload} />
-                      <Text>Data Export</Text>
+                      <Text>Export</Text>
                     </HStack>
                   </Tab>
                 </TabList>
@@ -4724,318 +3929,83 @@ export default function ComprehensiveReportsPage() {
                   {/* Executive Dashboard Tab */}
                   <TabPanel>
                     <VStack spacing={6} align="stretch">
-                      {/* Date Range Controls */}
-                      <Card>
-                        <CardBody>
-                          <VStack align="start" spacing={4}>
-                            <HStack wrap="wrap" spacing={4}>
-                              <VStack align="start">
-                                <Text fontWeight="medium">Analysis Period</Text>
-                                <HStack>
-                                  <Input
-                                    type="date"
-                                    value={primaryDateRange.start}
-                                    onChange={(e) =>
-                                      setPrimaryDateRange((prev) => ({
-                                        ...prev,
-                                        start: e.target.value,
-                                      }))
+                      {/* Problems first: failed sources, then errors */}
+                      <LoadFailureBanner
+                        failed={loadErrors}
+                        onRetry={() => fetchAllData(true)}
+                      />
+                      {analyticsError && (
+                        <ErrorCard
+                          message={analyticsError}
+                          onRetry={() => fetchAllData(true)}
+                        />
+                      )}
+
+                      {/* Financial summary leads the page. While the full
+                          download is in flight it is filled from the fast
+                          server summary. */}
+                      {(analyticsData?.financial || serverFin) && (
+                        <Card>
+                          <CardBody>
+                            <FinancialSummary
+                              financial={
+                                analyticsData?.financial
+                                  ? {
+                                      ...analyticsData.financial,
+                                      netTransfers:
+                                        analyticsData.financial.netTransfers,
                                     }
+                                  : serverFin?.financial
+                              }
+                              summary={
+                                analyticsData?.summary || serverFin?.summary
+                              }
+                              periodStart={primaryDateRange.start}
+                              periodEnd={primaryDateRange.end}
+                              vatRatePercentage={VAT_CONFIG.ratePercentage}
+                              previous={serverFin?.previous}
+                              showVat={showFinance}
+                              anchoredOn={serverAnchor}
+                              onDrill={
+                                analyticsData
+                                  ? (kind, title) => setDrill({ kind, title })
+                                  : undefined
+                              }
+                              onReconcile={
+                                showReconcile && analyticsData
+                                  ? () => setReconcileOpen(true)
+                                  : undefined
+                              }
+                              footer={
+                                canManage ? (
+                                  <PeriodControls
+                                    siteId={selectedFilterSite}
+                                    onChanged={() => reprocess(selectedFilterSite)}
                                   />
-                                  <Text>to</Text>
-                                  <Input
-                                    type="date"
-                                    value={primaryDateRange.end}
-                                    onChange={(e) =>
-                                      setPrimaryDateRange((prev) => ({
-                                        ...prev,
-                                        end: e.target.value,
-                                      }))
-                                    }
-                                  />
-                                </HStack>
-
-                                {userSiteInfo.canAccessMultipleSites && (
-                                  <Button
-                                    leftIcon={<FiFilter />}
-                                    onClick={() =>
-                                      setShowSiteFilter(!showSiteFilter)
-                                    }
-                                    variant={
-                                      showSiteFilter ? "solid" : "outline"
-                                    }
-                                    colorScheme="purple"
-                                  >
-                                    {showSiteFilter
-                                      ? "Hide Site Filter"
-                                      : "Show Site Filter"}
-                                  </Button>
-                                )}
-
-                                {showSiteFilter &&
-                                  userSiteInfo.canAccessMultipleSites && (
-                                    <Card mt={4} w="100%">
-                                      <CardBody>
-                                        <VStack align="start" spacing={3}>
-                                          <Text fontWeight="medium">
-                                            Filter by Site
-                                          </Text>
-                                          <HStack width="100%">
-                                            <Select
-                                              placeholder="All Sites"
-                                              value={selectedFilterSite || ""}
-                                              onChange={(e) => {
-                                                const siteId = e.target.value;
-                                                setSelectedFilterSite(
-                                                  siteId === "all"
-                                                    ? null
-                                                    : siteId,
-                                                );
-
-                                                if (siteId === "all") {
-                                                  // Clear site filter - re-process with no filter
-                                                  if (
-                                                    Object.keys(rawData)
-                                                      .length > 0
-                                                  ) {
-                                                    processFilteredAnalyticsData(
-                                                      {
-                                                        purchaseOrders:
-                                                          rawData.purchaseOrders ||
-                                                          [],
-                                                        goodsReceipts:
-                                                          rawData.goodsReceipts ||
-                                                          [],
-                                                        dispatches:
-                                                          rawData.dispatches ||
-                                                          [],
-                                                        transfers:
-                                                          rawData.transfers ||
-                                                          [],
-                                                        binCounts:
-                                                          rawData.binCounts ||
-                                                          [],
-                                                        stockValues: {
-                                                          items:
-                                                            rawData.stockItems ||
-                                                            [],
-                                                          summary: {
-                                                            totalInventoryValue:
-                                                              (
-                                                                rawData.stockItems ||
-                                                                []
-                                                              ).reduce(
-                                                                (
-                                                                  sum: number,
-                                                                  item: any,
-                                                                ) =>
-                                                                  sum +
-                                                                  (item.currentStock ||
-                                                                    0) *
-                                                                    (item.unitPrice ||
-                                                                      0),
-                                                                0,
-                                                              ),
-                                                            totalVAT: (
-                                                              rawData.stockItems ||
-                                                              []
-                                                            ).reduce(
-                                                              (
-                                                                sum: number,
-                                                                item: any,
-                                                              ) =>
-                                                                sum +
-                                                                (item.stockVAT ||
-                                                                  0),
-                                                              0,
-                                                            ),
-                                                          },
-                                                        },
-                                                        lowStock:
-                                                          rawData.lowStock ||
-                                                          [],
-                                                        suppliers:
-                                                          rawData.suppliers ||
-                                                          [],
-                                                        users:
-                                                          rawData.users || [],
-                                                        sites:
-                                                          rawData.sites || [],
-                                                      },
-                                                      dateRangeMemo,
-                                                      null,
-                                                    );
-                                                  } else {
-                                                    fetchAllData(true);
-                                                  }
-                                                } else if (siteId) {
-                                                  // Apply site filter using existing data if available
-                                                  if (
-                                                    Object.keys(rawData)
-                                                      .length > 0
-                                                  ) {
-                                                    fetchWithSiteFilter(siteId);
-                                                  } else {
-                                                    fetchAllData(true);
-                                                  }
-                                                }
-                                              }}
-                                            >
-                                              <option value="all">
-                                                All Sites
-                                              </option>
-                                              {availableSites.map((site) => (
-                                                <option
-                                                  key={site._id}
-                                                  value={site._id}
-                                                >
-                                                  {site.name}
-                                                </option>
-                                              ))}
-                                            </Select>
-                                            {selectedFilterSite && (
-                                              <Button
-                                                size="sm"
-                                                onClick={() => {
-                                                  setSelectedFilterSite(null);
-                                                  // Re-process with no filter
-                                                  if (
-                                                    Object.keys(rawData)
-                                                      .length > 0
-                                                  ) {
-                                                    processFilteredAnalyticsData(
-                                                      {
-                                                        purchaseOrders:
-                                                          rawData.purchaseOrders ||
-                                                          [],
-                                                        goodsReceipts:
-                                                          rawData.goodsReceipts ||
-                                                          [],
-                                                        dispatches:
-                                                          rawData.dispatches ||
-                                                          [],
-                                                        transfers:
-                                                          rawData.transfers ||
-                                                          [],
-                                                        binCounts:
-                                                          rawData.binCounts ||
-                                                          [],
-                                                        stockValues: {
-                                                          items:
-                                                            rawData.stockItems ||
-                                                            [],
-                                                          summary: {
-                                                            totalInventoryValue:
-                                                              (
-                                                                rawData.stockItems ||
-                                                                []
-                                                              ).reduce(
-                                                                (
-                                                                  sum: number,
-                                                                  item: any,
-                                                                ) =>
-                                                                  sum +
-                                                                  (item.currentStock ||
-                                                                    0) *
-                                                                    (item.unitPrice ||
-                                                                      0),
-                                                                0,
-                                                              ),
-                                                            totalVAT: (
-                                                              rawData.stockItems ||
-                                                              []
-                                                            ).reduce(
-                                                              (
-                                                                sum: number,
-                                                                item: any,
-                                                              ) =>
-                                                                sum +
-                                                                (item.stockVAT ||
-                                                                  0),
-                                                              0,
-                                                            ),
-                                                          },
-                                                        },
-                                                        lowStock:
-                                                          rawData.lowStock ||
-                                                          [],
-                                                        suppliers:
-                                                          rawData.suppliers ||
-                                                          [],
-                                                        users:
-                                                          rawData.users || [],
-                                                        sites:
-                                                          rawData.sites || [],
-                                                      },
-                                                      dateRangeMemo,
-                                                      null,
-                                                    );
-                                                  } else {
-                                                    fetchAllData(true);
-                                                  }
-                                                }}
-                                              >
-                                                Clear
-                                              </Button>
-                                            )}
-                                          </HStack>
-
-                                          {selectedFilterSite && (
-                                            <Badge colorScheme="purple">
-                                              Filtering by:{" "}
-                                              {
-                                                availableSites.find(
-                                                  (s) =>
-                                                    s._id ===
-                                                    selectedFilterSite,
-                                                )?.name
-                                              }
-                                            </Badge>
-                                          )}
-                                        </VStack>
-                                      </CardBody>
-                                    </Card>
-                                  )}
-                              </VStack>
-
-                              <Button
-                                leftIcon={<FiFilter />}
-                                onClick={handleUpdateAnalytics}
-                                isLoading={analyticsLoading}
-                                colorScheme="brand"
-                              >
-                                Update Analytics
-                              </Button>
-                            </HStack>
-                          </VStack>
-                        </CardBody>
-                      </Card>
-
-                      {analyticsLoading ? (
-                        <Flex justify="center" align="center" py={10}>
-                          <VStack spacing={4}>
-                            <Spinner
-                              size="xl"
-                              color="brand.500"
-                              thickness="4px"
+                                ) : undefined
+                              }
                             />
-                            <Text color={secondaryTextColor}>
-                              Loading analytics data with VAT calculations...
-                            </Text>
-                          </VStack>
-                        </Flex>
-                      ) : analyticsError ? (
-                        <Alert status="error" borderRadius="md">
-                          <AlertIcon />
-                          {analyticsError} &mdash; Please try refreshing the
-                          page or clicking "Update Analytics" again.
-                        </Alert>
-                      ) : !analyticsData ? (
-                        <Alert status="info" borderRadius="md">
-                          <AlertIcon />
-                          No analytics data available. Click "Update Analytics"
-                          to load data with VAT calculations.
-                        </Alert>
+                          </CardBody>
+                        </Card>
+                      )}
+
+                      {!analyticsData ? (
+                        analyticsLoading ? (
+                          <Flex justify="center" align="center" py={10}>
+                            <VStack spacing={4}>
+                              <Spinner size="xl" color="brand.500" thickness="4px" />
+                              <Text color={secondaryTextColor}>
+                                Loading the rest of the report…
+                              </Text>
+                            </VStack>
+                          </Flex>
+                        ) : analyticsError ? null : (
+                          <Alert status="info" borderRadius="md">
+                            <AlertIcon />
+                            No analytics data yet. Use the refresh button in the
+                            period bar to load it.
+                          </Alert>
+                        )
                       ) : (
                         <>
                           {/* Key Metrics Summary with VAT */}
@@ -5080,6 +4050,7 @@ export default function ComprehensiveReportsPage() {
                                     per person
                                   </StatHelpText>
                                 </Stat>
+                                {showFinance && (
                                 <Stat>
                                   <StatLabel>
                                     <HStack>
@@ -5105,6 +4076,7 @@ export default function ComprehensiveReportsPage() {
                                       : "Refundable"}
                                   </StatHelpText>
                                 </Stat>
+                                )}
                                 <Stat>
                                   <StatLabel>
                                     <HStack>
@@ -5124,7 +4096,8 @@ export default function ComprehensiveReportsPage() {
                             </CardBody>
                           </Card>
 
-                          {/* VAT Summary Card */}
+                          {/* VAT Summary Card (finance roles only) */}
+                          {showFinance && (
                           <Card borderLeft="4px" borderColor="blue.500">
                             <CardBody>
                               <Heading size="md" mb={4} color="blue.700">
@@ -5185,6 +4158,7 @@ export default function ComprehensiveReportsPage() {
                               </SimpleGrid>
                             </CardBody>
                           </Card>
+                          )}
 
                           {/* Operational Overview */}
                           <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>
@@ -5247,210 +4221,6 @@ export default function ComprehensiveReportsPage() {
                               isLoading={analyticsLoading}
                             />
                           </SimpleGrid>
-
-                          {/* Financial Metrics - PERIOD-BASED CALCULATIONS WITH VAT */}
-                          <Card>
-                            <CardBody>
-                              <Heading size="md" mb={4}>
-                                Financial Performance (With VAT Accounting)
-                              </Heading>
-
-                              {/* Success message when we have accurate data */}
-                              <Alert status="success" mb={4} fontSize="sm">
-                                <AlertIcon />
-                                <Box>
-                                  <Text fontWeight="bold">
-                                    Accurate period accounting with VAT enabled
-                                  </Text>
-                                  <Text>
-                                    Eswatini VAT rate of{" "}
-                                    {VAT_CONFIG.ratePercentage}% applied to all
-                                    transactions
-                                  </Text>
-                                </Box>
-                              </Alert>
-
-                              <SimpleGrid
-                                columns={{ base: 1, md: 2, lg: 4 }}
-                                spacing={6}
-                              >
-                                <Stat>
-                                  <StatLabel>Opening Stock</StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.openingStock?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    As of{" "}
-                                    {format(
-                                      new Date(primaryDateRange.start),
-                                      "MMM dd, yyyy",
-                                    )}
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>Goods Received</StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.periodPurchases?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    {analyticsData?.summary.totalGoodsReceipts}{" "}
-                                    receipts
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>Dispatch Consumption</StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.periodConsumption?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    {analyticsData?.summary.totalDispatches}{" "}
-                                    dispatches
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>Stock Variances</StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.netVariances?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    {analyticsData?.summary.totalBinCounts}{" "}
-                                    counts
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>Closing Stock</StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.closingStockValue?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>Calculated value</StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>
-                                    Cost of Goods Sold (COGS)
-                                  </StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.periodConsumption?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    Actual consumption
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>Period Sales</StatLabel>
-                                  <StatNumber>
-                                    SZL{" "}
-                                    {analyticsData?.financial?.periodSales?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    {analyticsData?.summary.totalPeopleFed?.toLocaleString()}{" "}
-                                    people fed
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>VAT Payable</StatLabel>
-                                  <StatNumber
-                                    color={
-                                      analyticsData?.financial?.netVATPayable >=
-                                      0
-                                        ? "red.500"
-                                        : "green.500"
-                                    }
-                                  >
-                                    SZL{" "}
-                                    {Math.abs(
-                                      analyticsData?.financial?.netVATPayable ||
-                                        0,
-                                    ).toLocaleString()}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    {analyticsData?.financial?.netVATPayable >=
-                                    0
-                                      ? "Due"
-                                      : "Refund"}
-                                  </StatHelpText>
-                                </Stat>
-                                <Stat>
-                                  <StatLabel>Gross Profit</StatLabel>
-                                  <StatNumber
-                                    color={
-                                      analyticsData?.financial
-                                        ?.grossProfitAfterVAT >= 0
-                                        ? "green.500"
-                                        : "red.500"
-                                    }
-                                  >
-                                    SZL{" "}
-                                    {analyticsData?.financial?.grossProfitAfterVAT?.toLocaleString() ||
-                                      "0"}
-                                  </StatNumber>
-                                  <StatHelpText>
-                                    {analyticsData?.financial?.profitPercentage?.toFixed(
-                                      1,
-                                    ) || "0"}
-                                    % margin
-                                  </StatHelpText>
-                                </Stat>
-                              </SimpleGrid>
-
-                              {/* Add calculation explanation with VAT */}
-                              <Box
-                                mt={4}
-                                p={3}
-                                borderRadius="md"
-                                border="1px"
-                                borderColor={CHART_COLORS.primary[0]}
-                                bg={"transparent"}
-                              >
-                                <Text fontSize="sm" fontWeight="medium">
-                                  Calculation Method (With VAT):
-                                </Text>
-                                <Text fontSize="sm">
-                                  • Opening Stock: Reconstructed from
-                                  transaction history
-                                </Text>
-                                <Text fontSize="sm">
-                                  • Goods Received: Actual receipts in period
-                                  (SZL{" "}
-                                  {analyticsData?.financial?.periodPurchases?.toLocaleString()}
-                                  )
-                                </Text>
-                                <Text fontSize="sm">
-                                  • Closing Stock: Calculated value (SZL{" "}
-                                  {analyticsData?.financial?.closingStockValue?.toLocaleString()}
-                                  )
-                                </Text>
-                                <Text fontSize="sm">
-                                  • COGS: Actual consumption (dispatched items
-                                  cost)
-                                </Text>
-                                <Text fontSize="sm">
-                                  • Gross Profit: Sales (excl. VAT) - COGS
-                                  (excl. VAT)
-                                </Text>
-                                <Text fontSize="sm">
-                                  • VAT Payable: tracked separately as a tax
-                                  liability — it is not deducted from profit
-                                </Text>
-                                <Text fontSize="sm">
-                                  • VAT Rate: {VAT_CONFIG.ratePercentage}%
-                                  (Eswatini Standard Rate)
-                                </Text>
-                              </Box>
-                            </CardBody>
-                          </Card>
 
                           {/* Supplier Performance - Filter by site */}
                           {analyticsData.suppliers.performance.length > 0 && (
@@ -5535,827 +4305,21 @@ export default function ComprehensiveReportsPage() {
           </Card>
         </VStack>
       </Box>
+
+      {/* Drill-down and reconciliation sheets */}
+      <DrillDownDrawer
+        isOpen={!!drill}
+        onClose={() => setDrill(null)}
+        title={drill?.title || ""}
+        description={`${primaryDateRange.start} to ${primaryDateRange.end}`}
+        rows={drillRows}
+        showValues={showFinance}
+      />
+      <ReconciliationPanel
+        isOpen={reconcileOpen}
+        onClose={() => setReconcileOpen(false)}
+        rows={reconciliationRows}
+      />
     </Box>
   );
 }
-
-// Chart Components
-interface PieChartData {
-  name: string;
-  value: number;
-}
-
-// Custom hook to ensure chart containers have dimensions before rendering
-const useChartDimensions = () => {
-  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const updateDimensions = () => {
-      if (containerRef.current) {
-        const { width, height } = containerRef.current.getBoundingClientRect();
-        if (width > 0 && height > 0) {
-          setDimensions({ width, height });
-        }
-      }
-    };
-
-    updateDimensions();
-
-    // Use a timeout to ensure the component is fully rendered
-    const timer = setTimeout(updateDimensions, 100);
-
-    // Update on resize
-    window.addEventListener("resize", updateDimensions);
-
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener("resize", updateDimensions);
-    };
-  }, []);
-
-  return { dimensions, containerRef };
-};
-
-// Simple, reliable BarChartComponent
-const BarChartComponent = ({
-  data,
-  title,
-  dataKey,
-  color = CHART_COLORS.primary[0],
-  isLoading = false,
-}: {
-  data: any[];
-  title: string;
-  dataKey: string;
-  color?: string;
-  isLoading?: boolean;
-}) => {
-  const [isMounted, setIsMounted] = useState(false);
-
-  // Add this to each chart component at the beginning
-  console.log(`📊 ${title} - Data:`, data?.length, "items");
-  console.log(`📊 ${title} - isMounted:`, isMounted);
-  console.log(`📊 ${title} - isLoading:`, isLoading);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  if (isLoading) {
-    return (
-      <Card minH="400px">
-        <CardBody>
-          <Skeleton height="24px" mb={4} width="200px" />
-          <Skeleton height="300px" />
-        </CardBody>
-      </Card>
-    );
-  }
-
-  if (!data || data.length === 0) {
-    return (
-      <Card minH="400px">
-        <CardBody>
-          <Text fontWeight="bold" mb={4}>
-            {title}
-          </Text>
-          <Box
-            height="300px"
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
-          >
-            <Text color="gray.500">No data available</Text>
-          </Box>
-        </CardBody>
-      </Card>
-    );
-  }
-
-  return (
-    <Card minH="400px">
-      <CardBody>
-        <Text fontWeight="bold" mb={4}>
-          {title}
-        </Text>
-        <Box height="350px" width="100%" minWidth="100%">
-          {isMounted && (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={data}
-                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis
-                  dataKey="name"
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
-                  tick={{ fontSize: 12 }}
-                />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip
-                  formatter={(value) => [`${value}`, title]}
-                  contentStyle={{
-                    borderRadius: "8px",
-                    boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
-                  }}
-                />
-                <Legend />
-                <Bar
-                  dataKey={dataKey}
-                  fill={color}
-                  radius={[4, 4, 0, 0]}
-                  name={title}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </Box>
-      </CardBody>
-    </Card>
-  );
-};
-
-// Simple, reliable LineChartComponent
-const LineChartComponent = ({
-  data,
-  title,
-  dataKey,
-  color = CHART_COLORS.primary[0],
-  isLoading = false,
-}: {
-  data: any[];
-  title: string;
-  dataKey: string;
-  color?: string;
-  isLoading?: boolean;
-}) => {
-  const [isMounted, setIsMounted] = useState(false);
-
-  // Add this to each chart component at the beginning
-  console.log(`📊 ${title} - Data:`, data?.length, "items");
-  console.log(`📊 ${title} - isMounted:`, isMounted);
-  console.log(`📊 ${title} - isLoading:`, isLoading);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  if (isLoading) {
-    return (
-      <Card minH="400px">
-        <CardBody>
-          <Skeleton height="24px" mb={4} width="200px" />
-          <Skeleton height="300px" />
-        </CardBody>
-      </Card>
-    );
-  }
-
-  if (!data || data.length === 0) {
-    return (
-      <Card minH="400px">
-        <CardBody>
-          <Text fontWeight="bold" mb={4}>
-            {title}
-          </Text>
-          <Box
-            height="300px"
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
-          >
-            <Text color="gray.500">No data available</Text>
-          </Box>
-        </CardBody>
-      </Card>
-    );
-  }
-
-  return (
-    <Card minH="400px">
-      <CardBody>
-        <Text fontWeight="bold" mb={4}>
-          {title}
-        </Text>
-        <Box height="350px" width="100%" minWidth="100%">
-          {isMounted && (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={data}
-                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip
-                  formatter={(value) => [`${value}`, title]}
-                  contentStyle={{
-                    borderRadius: "8px",
-                    boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
-                  }}
-                />
-                <Legend />
-                <Line
-                  type="monotone"
-                  dataKey={dataKey}
-                  stroke={color}
-                  strokeWidth={2}
-                  dot={{ stroke: color, strokeWidth: 2, r: 4 }}
-                  activeDot={{ r: 6, strokeWidth: 0 }}
-                  name={title}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-        </Box>
-      </CardBody>
-    </Card>
-  );
-};
-
-// Simple, reliable StatusPieChart
-const StatusPieChart = ({
-  data,
-  title,
-  colors = CHART_COLORS.primary,
-  isLoading = false,
-}: {
-  data: any[];
-  title: string;
-  colors?: string[];
-  isLoading?: boolean;
-}) => {
-  const [isMounted, setIsMounted] = useState(false);
-
-  // Add this to each chart component at the beginning
-  console.log(`📊 ${title} - Data:`, data?.length, "items");
-  console.log(`📊 ${title} - isMounted:`, isMounted);
-  console.log(`📊 ${title} - isLoading:`, isLoading);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  if (isLoading) {
-    return (
-      <Card minH="400px">
-        <CardBody>
-          <Skeleton height="24px" mb={4} width="200px" />
-          <Skeleton height="300px" />
-        </CardBody>
-      </Card>
-    );
-  }
-
-  if (!data || data.length === 0) {
-    return (
-      <Card minH="400px">
-        <CardBody>
-          <Text fontWeight="bold" mb={4}>
-            {title}
-          </Text>
-          <Box
-            height="300px"
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
-          >
-            <Text color="gray.500">No data available</Text>
-          </Box>
-        </CardBody>
-      </Card>
-    );
-  }
-
-  // Calculate total for percentages
-  const total = data.reduce((sum, item) => sum + (item.value || 0), 0);
-
-  return (
-    <Card minH="400px">
-      <CardBody>
-        <Text fontWeight="bold" mb={4}>
-          {title}
-        </Text>
-        <Box height="350px" width="100%" minWidth="100%">
-          {isMounted && (
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={data}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={true}
-                  label={(entry: any) => {
-                    const percentage =
-                      total > 0
-                        ? ((entry.value / total) * 100).toFixed(0)
-                        : "0";
-                    return `${entry.name} (${percentage}%)`;
-                  }}
-                  outerRadius={100}
-                  fill="#8884d8"
-                  dataKey="value"
-                  paddingAngle={1}
-                >
-                  {data.map((entry, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={colors[index % colors.length]}
-                      stroke="#fff"
-                      strokeWidth={1}
-                    />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(value, name) => {
-                    const percentage =
-                      total > 0
-                        ? ((Number(value) / total) * 100).toFixed(1)
-                        : "0";
-                    return [`${value} (${percentage}%)`, name];
-                  }}
-                  contentStyle={{
-                    borderRadius: "8px",
-                    boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
-                  }}
-                />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
-          )}
-        </Box>
-      </CardBody>
-    </Card>
-  );
-};
-
-// Visual Analytics Tab Component with VAT
-const VisualAnalyticsTab = ({
-  analyticsData,
-  loading,
-}: {
-  analyticsData: EnhancedAnalyticsData | null;
-  loading: boolean;
-}) => {
-  if (loading) {
-    return (
-      <VStack spacing={6} align="stretch">
-        <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>
-          <ChartSkeleton />
-          <ChartSkeleton />
-        </SimpleGrid>
-        <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>
-          <ChartSkeleton />
-          <ChartSkeleton />
-        </SimpleGrid>
-      </VStack>
-    );
-  }
-
-  if (!analyticsData) {
-    return (
-      <Alert status="info" borderRadius="md">
-        <AlertIcon />
-        No analytics data available. Please load data from the Executive
-        Dashboard.
-      </Alert>
-    );
-  }
-
-  return (
-    <VStack spacing={6} align="stretch">
-      <Text fontSize="lg" color="gray.600">
-        Interactive visualizations and detailed analytics across all system
-        modules with VAT calculations
-      </Text>
-
-      {/* VAT Analysis Chart */}
-      <Card>
-        <CardBody>
-          <Text fontWeight="bold" mb={4}>
-            VAT Analysis
-          </Text>
-          <Box height="300px" minWidth="100%">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={[
-                  {
-                    name: "Output VAT (Sales)",
-                    value: analyticsData.vat.summary.totalOutputVAT,
-                    fill: CHART_COLORS.error[0],
-                  },
-                  {
-                    name: "Input VAT (Purchases)",
-                    value: analyticsData.vat.summary.totalInputVAT,
-                    fill: CHART_COLORS.primary[0],
-                  },
-                  {
-                    name: "Net VAT Payable",
-                    value: Math.abs(analyticsData.vat.summary.netVATPayable),
-                    fill:
-                      analyticsData.vat.summary.netVATPayable >= 0
-                        ? CHART_COLORS.warning[0]
-                        : CHART_COLORS.success[0],
-                  },
-                ]}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip
-                  formatter={(value) => [
-                    `SZL ${Number(value).toLocaleString()}`,
-                    "Amount",
-                  ]}
-                />
-                <Legend />
-                <Bar dataKey="value" fill="#8884d8" />
-              </BarChart>
-            </ResponsiveContainer>
-          </Box>
-        </CardBody>
-      </Card>
-
-      {/* Financial Trends */}
-      <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>
-        <Card minH="400px">
-          <CardBody>
-            <Text fontWeight="bold" mb={4}>
-              Monthly Spending Trend (With VAT)
-            </Text>
-            <Box height="300px" minWidth="100%">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={analyticsData.financial.monthlySpending}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
-                  <YAxis />
-                  <Tooltip
-                    formatter={(value) => [
-                      `SZL ${Number(value).toLocaleString()}`,
-                      "Amount",
-                    ]}
-                  />
-                  <Legend />
-                  <Bar
-                    dataKey="spending"
-                    fill={CHART_COLORS.primary[0]}
-                    name="Spending (excl. VAT)"
-                  />
-                  <Bar
-                    dataKey="vat"
-                    fill={CHART_COLORS.vat[0]}
-                    name="VAT Amount"
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="totalWithVAT"
-                    stroke={CHART_COLORS.success[0]}
-                    strokeWidth={2}
-                    name="Total (incl. VAT)"
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </Box>
-          </CardBody>
-        </Card>
-
-        <Card minH="400px">
-          <CardBody>
-            <Text fontWeight="bold" mb={4}>
-              Cost Per Person Trend
-            </Text>
-            <Box height="300px" minWidth="100%">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={analyticsData.financial.costPerPersonTrend}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip
-                    formatter={(value) => [
-                      `SZL ${Number(value).toFixed(2)}`,
-                      "Cost per Person",
-                    ]}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="cost"
-                    stroke={CHART_COLORS.success[0]}
-                    strokeWidth={2}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </Box>
-          </CardBody>
-        </Card>
-      </SimpleGrid>
-
-      {/* Inventory Health */}
-      <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>
-        <Card>
-          <CardBody>
-            <Text fontWeight="bold" mb={4}>
-              Inventory Health Status
-            </Text>
-            <VStack spacing={4} align="stretch">
-              <HStack justify="space-between">
-                <Text>Healthy Items</Text>
-                <Badge colorScheme="green" fontSize="md">
-                  {analyticsData.inventory.lowStockBreakdown.healthy}
-                </Badge>
-              </HStack>
-              <HStack justify="space-between">
-                <Text>Low Stock Warning</Text>
-                <Badge colorScheme="yellow" fontSize="md">
-                  {analyticsData.inventory.lowStockBreakdown.warning}
-                </Badge>
-              </HStack>
-              <HStack justify="space-between">
-                <Text>Critical Stock</Text>
-                <Badge colorScheme="red" fontSize="md">
-                  {analyticsData.inventory.lowStockBreakdown.critical}
-                </Badge>
-              </HStack>
-              <Progress
-                value={
-                  (analyticsData.inventory.lowStockBreakdown.healthy /
-                    analyticsData.summary.totalStockItems) *
-                  100
-                }
-                colorScheme="green"
-                size="lg"
-              />
-            </VStack>
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardBody>
-            <Text fontWeight="bold" mb={4}>
-              Inventory Accuracy
-            </Text>
-            <VStack spacing={4} align="stretch">
-              <HStack justify="space-between">
-                <Text>Count Accuracy</Text>
-                <Text fontWeight="bold">
-                  {(analyticsData.binCounts.accuracy * 100).toFixed(1)}%
-                </Text>
-              </HStack>
-              <Progress
-                value={analyticsData.binCounts.accuracy * 100}
-                colorScheme="blue"
-                size="lg"
-              />
-
-              {/* Quantity Variance Breakdown */}
-              <Box mt={2}>
-                <Text fontWeight="medium" fontSize="sm" mb={2}>
-                  Quantity Variance
-                </Text>
-                <Wrap spacing={4}>
-                  <WrapItem>
-                    <Badge colorScheme="green" px={3} py={1}>
-                      Zero:{" "}
-                      {analyticsData.binCounts.varianceAnalysis.zero.quantity}
-                    </Badge>
-                  </WrapItem>
-                  <WrapItem>
-                    <Badge colorScheme="red" px={3} py={1}>
-                      Negative:{" "}
-                      {
-                        analyticsData.binCounts.varianceAnalysis.negative
-                          .quantity
-                      }
-                    </Badge>
-                  </WrapItem>
-                  <WrapItem>
-                    <Badge colorScheme="orange" px={3} py={1}>
-                      Positive:{" "}
-                      {
-                        analyticsData.binCounts.varianceAnalysis.positive
-                          .quantity
-                      }
-                    </Badge>
-                  </WrapItem>
-                </Wrap>
-              </Box>
-
-              {/* Cost Variance Breakdown */}
-              <Box mt={2}>
-                <Text fontWeight="medium" fontSize="sm" mb={2}>
-                  Cost Variance (E)
-                </Text>
-                <SimpleGrid columns={3} spacing={2}>
-                  <Box>
-                    <Text fontSize="xs" color="gray.500">
-                      Zero Cost
-                    </Text>
-                    <Badge colorScheme="gray" fontSize="sm" px={2}>
-                      E 0.00
-                    </Badge>
-                  </Box>
-                  <Box>
-                    <Text fontSize="xs" color="gray.500">
-                      Negative (Under)
-                    </Text>
-                    <Badge colorScheme="green" fontSize="sm" px={2}>
-                      E{" "}
-                      {analyticsData.binCounts.varianceAnalysis.negative.cost.toFixed(
-                        2,
-                      )}
-                    </Badge>
-                  </Box>
-                  <Box>
-                    <Text fontSize="xs" color="gray.500">
-                      Positive (Over)
-                    </Text>
-                    <Badge colorScheme="orange" fontSize="sm" px={2}>
-                      E{" "}
-                      {analyticsData.binCounts.varianceAnalysis.positive.cost.toFixed(
-                        2,
-                      )}
-                    </Badge>
-                  </Box>
-                </SimpleGrid>
-              </Box>
-            </VStack>
-          </CardBody>
-        </Card>
-      </SimpleGrid>
-
-      {/* Top Items Tables with VAT */}
-      <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>
-        <Card>
-          <CardBody>
-            <Heading size="sm" mb={4}>
-              Top Purchased Items (With VAT)
-            </Heading>
-            <TableContainer>
-              <Table variant="simple" size="sm">
-                <Thead>
-                  <Tr>
-                    <Th>Item</Th>
-                    <Th isNumeric>Quantity</Th>
-                    <Th isNumeric>Value</Th>
-                    <Th isNumeric>VAT</Th>
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {analyticsData.purchaseOrders.topItems
-                    .slice(0, 5)
-                    .map((item, index) => (
-                      <Tr key={item.name}>
-                        <Td>{item.name}</Td>
-                        <Td isNumeric>{item.quantity}</Td>
-                        <Td isNumeric>SZL {item.value.toLocaleString()}</Td>
-                        <Td isNumeric>SZL {item.vatAmount.toLocaleString()}</Td>
-                      </Tr>
-                    ))}
-                </Tbody>
-              </Table>
-            </TableContainer>
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardBody>
-            <Heading size="sm" mb={4}>
-              Top Dispatched Items (With VAT)
-            </Heading>
-            <TableContainer>
-              <Table variant="simple" size="sm">
-                <Thead>
-                  <Tr>
-                    <Th>Item</Th>
-                    <Th isNumeric>Quantity</Th>
-                    <Th isNumeric>Cost</Th>
-                    <Th isNumeric>VAT</Th>
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {analyticsData.dispatches.topItems
-                    .slice(0, 5)
-                    .map((item, index) => (
-                      <Tr key={item.name}>
-                        <Td>{item.name}</Td>
-                        <Td isNumeric>{item.quantity}</Td>
-                        <Td isNumeric>SZL {item.cost.toLocaleString()}</Td>
-                        <Td isNumeric>SZL {item.vatAmount.toLocaleString()}</Td>
-                      </Tr>
-                    ))}
-                </Tbody>
-              </Table>
-            </TableContainer>
-          </CardBody>
-        </Card>
-      </SimpleGrid>
-    </VStack>
-  );
-};
-
-// Data Export Tab Component with VAT
-const DataExportTab = ({
-  exportToExcel,
-  loading,
-  dataAvailable,
-}: {
-  exportToExcel: () => void;
-  loading: boolean;
-  dataAvailable: boolean;
-}) => (
-  <VStack spacing={6} align="stretch">
-    <Card>
-      <CardBody>
-        <VStack spacing={4} align="start">
-          <Heading size="md">Comprehensive Data Export with VAT</Heading>
-          <Text>
-            Generate a complete Excel report with multiple sheets containing all
-            system data, analytics, and visual summaries. The export includes
-            accurate VAT calculations using the Eswatini standard rate of{" "}
-            {VAT_CONFIG.ratePercentage}%.
-          </Text>
-
-          <SimpleGrid columns={2} spacing={4} width="100%">
-            <HStack>
-              <Box w="2" h="2" bg="green.500" borderRadius="full" />
-              <Text>Executive Summary</Text>
-            </HStack>
-            <HStack>
-              <Box w="2" h="2" bg="green.500" borderRadius="full" />
-              <Text>Purchase Orders with VAT</Text>
-            </HStack>
-            <HStack>
-              <Box w="2" h="2" bg="green.500" borderRadius="full" />
-              <Text>Goods Receipts with VAT</Text>
-            </HStack>
-            <HStack>
-              <Box w="2" h="2" bg="green.500" borderRadius="full" />
-              <Text>Dispatches & Consumption with VAT</Text>
-            </HStack>
-            <HStack>
-              <Box w="2" h="2" bg="green.500" borderRadius="full" />
-              <Text>Stock Transfers</Text>
-            </HStack>
-            <HStack>
-              <Box w="2" h="2" bg="green.500" borderRadius="full" />
-              <Text>Bin Counts & Adjustments</Text>
-            </HStack>
-            <HStack>
-              <Box w="2" h="2" bg="green.500" borderRadius="full" />
-              <Text>Inventory Catalog with VAT</Text>
-            </HStack>
-            <HStack>
-              <Box w="2" h="2" bg="green.500" borderRadius="full" />
-              <Text>Low Stock Alerts</Text>
-            </HStack>
-            <HStack>
-              <Box w="2" h="2" bg="green.500" borderRadius="full" />
-              <Text>Analytics Data with VAT</Text>
-            </HStack>
-            <HStack>
-              <Box w="2" h="2" bg="green.500" borderRadius="full" />
-              <Text>Supplier Performance with VAT</Text>
-            </HStack>
-            <HStack>
-              <Box w="2" h="2" bg="blue.500" borderRadius="full" />
-              <Text>VAT Analysis Report</Text>
-            </HStack>
-            <HStack>
-              <Box w="2" h="2" bg="blue.500" borderRadius="full" />
-              <Text>Sales Summary with VAT</Text>
-            </HStack>
-          </SimpleGrid>
-
-          <Alert status="info" borderRadius="md">
-            <AlertIcon />
-            The exported Excel file contains accurate, real-time data with
-            Eswatini VAT calculations. All financial values are clearly marked
-            as either excluding or including VAT.
-          </Alert>
-
-          <Button
-            leftIcon={<FiDownload />}
-            colorScheme="green"
-            onClick={exportToExcel}
-            isLoading={loading}
-            isDisabled={!dataAvailable}
-            size="lg"
-          >
-            {dataAvailable
-              ? "Generate Comprehensive Report with VAT"
-              : "Load Data First"}
-          </Button>
-
-          {!dataAvailable && (
-            <Text color="orange.500" fontSize="sm">
-              Please load data from the Executive Dashboard tab first to ensure
-              accurate VAT calculations.
-            </Text>
-          )}
-        </VStack>
-      </CardBody>
-    </Card>
-  </VStack>
-);

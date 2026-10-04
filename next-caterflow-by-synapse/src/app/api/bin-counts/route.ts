@@ -9,6 +9,7 @@ import {
   calculateStock,
 } from "@/lib/stockCalculations";
 import { getArchivedBinCounts } from "@/lib/archiveQueries";
+import { mergeById } from "@/lib/financialReport";
 
 const getCurrentStockForItem = async (
   stockItemId: string,
@@ -71,7 +72,9 @@ export async function GET() {
                 },
                 countedQuantity,
                 systemQuantityAtCountTime,
-                variance
+                variance,
+                varianceCost,
+                unitPrice
             }
         }`;
 
@@ -132,7 +135,7 @@ export async function GET() {
     }
 
     // Merge: Sanity (recent) + MongoDB (archived), sorted by date descending
-    const merged = [...countsWithTotals, ...archivedCounts].sort(
+    const merged = mergeById(countsWithTotals, archivedCounts).sort(
         (a, b) => new Date(b.countDate).getTime() - new Date(a.countDate).getTime()
     );
 
