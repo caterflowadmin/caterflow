@@ -17,7 +17,7 @@ Each finding is marked **Confirmed** (the faulty code was read and the failure f
 
 Consequences for the fixes below:
 
-1. **Document headroom.** In March the project held about 12,450 Sanity documents (about 50% of 25,000; see `analysis.md`). The 60-day archive window is a headroom control, not a hard requirement: it keeps live documents well under the cap, so the stock tools must work from Sanity plus the archive (F-01 to F-04) rather than assume everything is live.
+1. **Document headroom.** In March the project held about 12,450 Sanity documents (about 50% of 25,000), and the 28 June export held about 24,784 (about 99%; see `analysis.md` and the MongoDB migration plan). Headroom is therefore thin and must be re-measured before any change that adds Sanity documents. The 60-day archive window is a headroom control: it holds live documents under the cap, so the stock tools must work from Sanity plus the archive (F-01 to F-04) rather than assume everything is live.
 2. **Any new Sanity document type costs quota.** Period closes and opening balances are deliberately stored in MongoDB (`report_anchors`), not Sanity. Phase 3 cost layers must follow the same rule.
 3. **Measure before changing retention.** Add a daily count of Sanity documents by type to the monitoring in Phase 5, with alerts at 70% (17,500) and 85% (21,250) of the limit. Raising `ARCHIVE_DAYS_THRESHOLD` above 60 is only safe while the count stays below the 70% line.
 4. **Atlas bandwidth.** The report now loads the complete archive. With about 1 GB/week out on M0, prefer the server-side summary and cache; move to a paid tier if the weekly transfer approaches the cap.

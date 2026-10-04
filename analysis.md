@@ -58,8 +58,8 @@
 ### ⚠️ **QUOTA STATUS**
 
 - **CaterFlow's Sanity plan limit is 25,000 documents** (confirmed by Gee, 2026-10-04). This is not the public free-plan figure of 10,000, which an earlier version of this note wrongly assumed.
-- At the time of this report (March 2026) the project held **~12,448 documents, about 50% of the 25,000 limit**, so it was not over quota.
-- Headroom was about 12,500 documents. Re-measure before relying on this: transaction volume has grown since March (see the accuracy plan, section 0).
+- At the time of this report (March 2026) the project held **~12,448 documents, about 50% of the 25,000 limit**.
+- By the 28 June 2026 production export it held **~24,784 documents, about 99% of the limit** (see `plans/2026-09-15-sanity-to-mongodb-migration-plan.md`), and production was later blocked by the quota. Re-measure the live count before relying on any headroom figure.
 - Keep the archive and cleanup jobs running: the limit is enforced by Sanity, and a free-style plan blocks requests at the cap instead of billing the overage.
 
 ---
