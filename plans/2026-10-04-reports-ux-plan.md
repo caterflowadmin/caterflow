@@ -3,7 +3,33 @@
 Scope: `next-caterflow-by-synapse/src/app/reports/page.tsx` (about 5,700 lines, one component) and the data it loads.
 Written from the two phone screenshots of the Financial Performance section and a read of the code.
 
-Status key: **Done** = shipped in this change · **Next** = recommended order · **Later** = worth doing, not urgent.
+Status key: **Done** = implemented and tested · **Later** = not built.
+
+## Implementation status (all phases)
+
+| Item | Status | Where |
+|------|--------|-------|
+| Financial summary, stock-movement statement, data-quality alerts | Done | `reports/FinancialSummary.tsx`, `lib/financialReport.ts` |
+| Sticky period + site bar (bottom sheet), partial-period chip, "Updated HH:mm", load progress | Done | `reports/PeriodBar.tsx` |
+| vs-previous-period chips | Done | `FinancialSummary`, `previousRange`, `percentChange` |
+| Tabs: shorter labels, scrollable, lazy-mounted, deep links (`?tab=&from=&to=&site=`) | Done | `reports/page.tsx` |
+| Toasts: success toast removed; missing-date toast replaced by an alert | Done | `page.tsx`, `computeFinancials` |
+| Drill-down sheets behind every figure and fixable alert | Done | `reports/DrillDownDrawer.tsx`, `buildDrillRows` |
+| Partial-failure banner, inline error card with retry, exports disabled on partial data | Done | `reports/DataStatus.tsx`, `page.tsx` |
+| Accessibility: 44px targets, contrast-safe tones, ▲/▼ not colour-only, ARIA labels | Done | components above |
+| Stale period bug: changing dates on cached data now recalculates | Done | `reprocess` in `page.tsx` |
+| Latest-request-wins guard against slow earlier loads | Done | `loadSeqRef` in `page.tsx` |
+| Server-side summary endpoint (~1 KB), used as the fast path | Done | `api/reports/financials` |
+| Stale-while-revalidate cache for raw documents | Done (in-memory, 5 min) | `rawDataCache` in `page.tsx` |
+| Code-split charts (recharts) and on-demand xlsx / file-saver | Done | `reports/charts.tsx`, dynamic imports |
+| Split of `page.tsx` | Partly done: charts, constants, skeletons, types, filters, calculation, bar, drawers and controls extracted (page ~4,600 lines, was ~6,400); fetch/processing hook still inside the page | |
+| Period close, opening-balance record, reopen with audit trail | Done | `api/reports/period-close`, `lib/periodClose.ts`, `lib/reportAnchors.ts`, `reports/PeriodControls.tsx` |
+| Edited-after-close detection | Done | `computeFinancials` |
+| Item-level reconciliation view | Done | `reports/ReconciliationPanel.tsx`, `buildReconciliation` |
+| Export parity (data-quality block in workbooks) | Done | `buildIntegrityRows` |
+| Role-based views and API enforcement | Done | `lib/reportAccess.ts`, route handlers |
+| True lazy *fetching* per tab, saved views, scheduled summaries, anomaly flags, offline snapshot | Later | Section 7 |
+
 
 ---
 
@@ -44,7 +70,7 @@ Status key: **Done** = shipped in this change · **Next** = recommended order ·
 
 ---
 
-## 3. Phase 0: done in this change
+## 3. Phase 0: foundation
 
 - **Financial summary rebuilt** (`reports/FinancialSummary.tsx`):
   - 2×2 headline grid (Sales, COGS, Gross profit, VAT payable/refundable) with compact figures (`SZL 3.17M`) and full precision on hover/long-press.
@@ -58,7 +84,7 @@ Acceptance (met): no `console.log` per document; same inputs give the same outpu
 
 ---
 
-## 4. Phase 1: next (about 1–2 days)
+## 4. Phase 1: layout, drill-down, states (done)
 
 ### 4.1 Layout and navigation (phone)
 
@@ -94,7 +120,7 @@ The partial-failure state matters most: a failed dispatch fetch currently yields
 
 ---
 
-## 5. Phase 2: structure and performance (about 3–5 days)
+## 5. Phase 2: structure and performance (done, except full lazy fetching)
 
 1. **Split `page.tsx`** into `ReportsShell` (filters, tabs), one component per tab, and a `useReportData()` hook that owns fetching and returns `{ status, data, errors }`. Memoise tab bodies so switching tabs does not recompute the others.
 2. **Server-side financial summary.** Add `GET /api/reports/financials?start&end&site` that runs `computeFinancials` next to the data (Sanity + Mongo) and returns about 1 KB, not the full history.
@@ -109,7 +135,7 @@ Acceptance: first meaningful paint of the summary under 2s on a throttled 4G pro
 
 ---
 
-## 6. Phase 3: trust and workflow (about 1 week)
+## 6. Phase 3: trust and workflow (done)
 
 - **Period close.** A "Close period" action stores the closing stock for a month. The next month's opening is read from it, and a changed closed period raises an alert ("a document dated in September was edited after close"). This is the durable fix for opening-stock drift.
 - **Opening-balance record.** If there was stock before the first receipt in the system, record it once as a dated opening-balance entry so the ledger starts from the truth.

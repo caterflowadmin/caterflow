@@ -12,6 +12,7 @@
 
 import React from "react";
 import {
+  Button,
   Accordion,
   AccordionButton,
   AccordionIcon,
@@ -32,8 +33,11 @@ import {
 } from "@chakra-ui/react";
 import { format } from "date-fns";
 import {
+  drillKindForIssue,
   formatSZL,
   formatSZLCompact,
+  percentChange,
+  type DrillKind,
   type IntegrityIssue,
 } from "@/lib/financialReport";
 
@@ -43,6 +47,23 @@ interface FinancialSummaryProps {
   periodStart: string;
   periodEnd: string;
   vatRatePercentage: number;
+  /** Previous equal-length period, for the "vs previous" chips. */
+  previous?: {
+    periodSales?: number;
+    periodConsumption?: number;
+    grossProfit?: number;
+    netVATPayable?: number | null;
+  } | null;
+  /** Finance roles see VAT; operational roles do not. */
+  showVat?: boolean;
+  /** Tap a figure / row / alert to see the documents behind it. */
+  onDrill?: (kind: DrillKind, title: string) => void;
+  /** Opens the item-level reconciliation (admin / auditor, all-sites view). */
+  onReconcile?: () => void;
+  /** Where opening stock came from, if a closed period / opening balance was used. */
+  anchoredOn?: { kind: "close" | "opening-balance"; asOf: string } | null;
+  /** Extra controls rendered at the bottom (period close). */
+  footer?: React.ReactNode;
 }
 
 const severityStatus = (s: IntegrityIssue["severity"]) =>
@@ -56,38 +77,73 @@ const safeDate = (v: string) => {
   }
 };
 
+// Colours that keep >= 4.5:1 contrast on both themes; direction is also shown
+// with an arrow so colour is never the only signal.
+const useTone = () => {
+  const good = useColorModeValue("green.700", "green.300");
+  const bad = useColorModeValue("red.700", "red.300");
+  return { good, bad };
+};
+
 const Headline = ({
   label,
   value,
   hint,
   tone,
+  previous,
+  higherIsBetter = true,
+  onClick,
 }: {
   label: string;
   value: number;
   hint?: string;
   tone?: "good" | "bad" | "neutral";
+  /** Previous-period value; renders a "vs previous" chip when comparable. */
+  previous?: number | null;
+  higherIsBetter?: boolean;
+  onClick?: () => void;
 }) => {
   const border = useColorModeValue("gray.200", "whiteAlpha.300");
-  const color =
-    tone === "good" ? "green.400" : tone === "bad" ? "red.400" : undefined;
+  const hover = useColorModeValue("gray.50", "whiteAlpha.100");
+  const { good, bad } = useTone();
+  const color = tone === "good" ? good : tone === "bad" ? bad : undefined;
+  const delta = percentChange(value, previous ?? null);
+  const improved = delta === null ? null : higherIsBetter ? delta >= 0 : delta <= 0;
+  const interactive = !!onClick;
   return (
-    <Box borderWidth="1px" borderColor={border} borderRadius="lg" p={3}>
-      <Text fontSize="xs" textTransform="uppercase" opacity={0.7}>
+    <Box
+      borderWidth="1px"
+      borderColor={border}
+      borderRadius="lg"
+      p={3}
+      as={interactive ? "button" : "div"}
+      textAlign="left"
+      onClick={onClick}
+      minH="44px"
+      _hover={interactive ? { bg: hover } : undefined}
+      aria-label={interactive ? `${label}: ${formatSZL(value)}. Show documents` : undefined}
+    >
+      <Text fontSize="xs" textTransform="uppercase" opacity={0.75}>
         {label}
       </Text>
       <Text
         fontSize={{ base: "lg", md: "2xl" }}
         fontWeight="bold"
         color={color}
-        // Full precision on tap/hover; compact form keeps 7-figure values on
-        // one line at phone width.
+        // Full precision on hover; compact form keeps 7-figure values on one
+        // line at phone width.
         title={formatSZL(value)}
       >
         {formatSZLCompact(value)}
       </Text>
       {hint && (
-        <Text fontSize="xs" opacity={0.7}>
+        <Text fontSize="xs" opacity={0.75}>
           {hint}
+        </Text>
+      )}
+      {delta !== null && (
+        <Text fontSize="xs" color={improved ? good : bad} mt={0.5}>
+          {delta >= 0 ? "▲" : "▼"} {Math.abs(delta).toFixed(1)}% vs previous
         </Text>
       )}
     </Box>
@@ -101,6 +157,7 @@ const Row = ({
   sign,
   strong,
   tone,
+  onClick,
 }: {
   label: string;
   hint?: string;
@@ -108,8 +165,26 @@ const Row = ({
   sign?: "+" | "−" | "=";
   strong?: boolean;
   tone?: "good" | "bad";
+  onClick?: () => void;
 }) => (
-  <Flex justify="space-between" align="baseline" gap={3} py={1.5}>
+  <Flex
+    justify="space-between"
+    align="baseline"
+    gap={3}
+    py={1.5}
+    minH="44px"
+    cursor={onClick ? "pointer" : undefined}
+    onClick={onClick}
+    role={onClick ? "button" : undefined}
+    tabIndex={onClick ? 0 : undefined}
+    onKeyDown={
+      onClick
+        ? (e: React.KeyboardEvent) =>
+            (e.key === "Enter" || e.key === " ") && onClick()
+        : undefined
+    }
+    aria-label={onClick ? `${label}: ${formatSZL(value)}. Show documents` : undefined}
+  >
     <Box minW={0}>
       <Text fontWeight={strong ? "bold" : "medium"} noOfLines={1}>
         {sign && (
@@ -128,7 +203,7 @@ const Row = ({
     <Text
       fontWeight={strong ? "bold" : "semibold"}
       whiteSpace="nowrap"
-      color={tone === "good" ? "green.400" : tone === "bad" ? "red.400" : undefined}
+      color={tone === "good" ? "green.400" : tone === "bad" ? "red.300" : undefined}
       sx={{ fontVariantNumeric: "tabular-nums" }}
     >
       {formatSZL(value)}
@@ -142,6 +217,12 @@ export default function FinancialSummary({
   periodStart,
   periodEnd,
   vatRatePercentage,
+  previous,
+  showVat = true,
+  onDrill,
+  onReconcile,
+  anchoredOn,
+  footer,
 }: FinancialSummaryProps) {
   const border = useColorModeValue("gray.200", "whiteAlpha.300");
   const issues: IntegrityIssue[] = financial?.integrity || [];
@@ -166,8 +247,12 @@ export default function FinancialSummary({
         <Alert status="success" fontSize="sm" borderRadius="md">
           <AlertIcon />
           <AlertDescription>
-            Opening stock continues from the previous period and no data-quality
-            problems were detected.
+            {anchoredOn
+              ? `Opening stock continues from the ${
+                  anchoredOn.kind === "close" ? "closed period" : "recorded opening balance"
+                } at ${safeDate(anchoredOn.asOf)}. `
+              : "Opening stock continues from the previous period. "}
+            No data-quality problems were detected.
           </AlertDescription>
         </Alert>
       ) : (
@@ -184,38 +269,62 @@ export default function FinancialSummary({
               <Box>
                 <AlertTitle fontSize="sm">{issue.title}</AlertTitle>
                 <AlertDescription>{issue.detail}</AlertDescription>
+                {onDrill && drillKindForIssue(issue.id) && (
+                  <Button
+                    mt={2}
+                    size="xs"
+                    variant="outline"
+                    onClick={() => onDrill(drillKindForIssue(issue.id)!, issue.title)}
+                  >
+                    Show documents
+                  </Button>
+                )}
+                {onReconcile && issue.id === "live-stock-gap" && (
+                  <Button mt={2} size="xs" variant="outline" onClick={onReconcile}>
+                    Reconcile by item
+                  </Button>
+                )}
               </Box>
             </Alert>
           ))}
         </Stack>
       )}
 
-      {/* Headline numbers: the four things people open this page for */}
-      <SimpleGrid columns={{ base: 2, md: 4 }} spacing={3}>
+      {/* Headline numbers: the things people open this page for */}
+      <SimpleGrid columns={{ base: 2, md: showVat ? 4 : 3 }} spacing={3}>
         <Headline
           label="Sales"
           value={f.periodSales || 0}
           hint={`${(summary?.totalPeopleFed || 0).toLocaleString()} people fed`}
+          previous={previous?.periodSales}
+          onClick={onDrill && (() => onDrill("sales", "Sales"))}
         />
         <Headline
           label="Cost of goods sold"
           value={f.periodConsumption || 0}
           hint={`${summary?.totalDispatches || 0} dispatches`}
+          previous={previous?.periodConsumption}
+          higherIsBetter={false}
+          onClick={onDrill && (() => onDrill("consumed", "Cost of goods sold"))}
         />
         <Headline
           label="Gross profit"
           value={f.grossProfitAfterVAT || 0}
           hint={`${(f.profitPercentage || 0).toFixed(1)}% margin`}
           tone={(f.grossProfitAfterVAT || 0) >= 0 ? "good" : "bad"}
+          previous={previous?.grossProfit}
         />
-        <Headline
-          label={vatDue >= 0 ? "VAT payable" : "VAT refundable"}
-          value={Math.abs(vatDue)}
-          hint={`Output ${formatSZLCompact(f.vatOnSales || 0)} − input ${formatSZLCompact(
-            f.vatOnPurchases || 0,
-          )}`}
-          tone={vatDue >= 0 ? "bad" : "good"}
-        />
+        {showVat && (
+          <Headline
+            label={vatDue >= 0 ? "VAT payable" : "VAT refundable"}
+            value={Math.abs(vatDue)}
+            hint={`Output ${formatSZLCompact(f.vatOnSales || 0)} − input ${formatSZLCompact(
+              f.vatOnPurchases || 0,
+            )}`}
+            tone={vatDue >= 0 ? "bad" : "good"}
+            onClick={onDrill && (() => onDrill("vat", "Input VAT on received goods"))}
+          />
+        )}
       </SimpleGrid>
 
       {/* Stock movement statement */}
@@ -233,12 +342,14 @@ export default function FinancialSummary({
           hint={`${summary?.totalGoodsReceipts || 0} completed receipts`}
           value={f.periodPurchases || 0}
           sign="+"
+          onClick={onDrill && (() => onDrill("received", "Goods received"))}
         />
         <Row
           label="Consumed"
           hint={`${summary?.totalDispatches || 0} dispatches`}
           value={f.periodConsumption || 0}
           sign="−"
+          onClick={onDrill && (() => onDrill("consumed", "Consumed"))}
         />
         <Row
           label="Count variances"
@@ -246,6 +357,7 @@ export default function FinancialSummary({
           value={f.netVariances || 0}
           sign={(f.netVariances || 0) < 0 ? "−" : "+"}
           tone={(f.netVariances || 0) < 0 ? "bad" : undefined}
+          onClick={onDrill && (() => onDrill("variances", "Count variances"))}
         />
         {transfers !== 0 && (
           <Row
@@ -263,6 +375,11 @@ export default function FinancialSummary({
           sign="="
           strong
         />
+        {onReconcile && (
+          <Button mt={2} size="sm" variant="outline" onClick={onReconcile} w="100%" minH="44px">
+            Reconcile with live stock by item
+          </Button>
+        )}
       </Box>
 
       {notes.length > 0 && (
@@ -274,6 +391,8 @@ export default function FinancialSummary({
           ))}
         </Stack>
       )}
+
+      {footer}
 
       <Accordion allowToggle>
         <AccordionItem border="none">
@@ -291,10 +410,10 @@ export default function FinancialSummary({
                 left out (and listed above).
               </Text>
               <Text>
-                • Opening stock = everything received, minus everything
-                consumed, plus count variances, before the period starts. It
-                therefore always equals the previous period&apos;s closing
-                stock.
+                • Opening stock = the last closed period (or recorded opening
+                balance) plus everything received, minus everything consumed,
+                plus count variances, since then. It therefore always equals the
+                previous period&apos;s closing stock.
               </Text>
               <Text>
                 • Sales use the price stamped on each dispatch (site price at the

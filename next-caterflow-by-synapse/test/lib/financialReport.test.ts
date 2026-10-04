@@ -9,6 +9,13 @@ import {
   mergeById,
   netTransferValue,
   countVariance,
+  previousRange,
+  percentChange,
+  monthKey,
+  monthRange,
+  buildDrillRows,
+  drillKindForIssue,
+  buildReconciliation,
 } from "@/lib/financialReport";
 
 const d = (s: string) => new Date(s);
@@ -284,5 +291,198 @@ describe("formatSZL", () => {
     expect(formatSZL(1137069.51)).toBe("SZL 1,137,069.51");
     expect(formatSZL(-43390.782)).toBe("-SZL 43,390.78");
     expect(formatSZL(undefined)).toBe("SZL 0.00");
+  });
+});
+
+describe("ledger anchors (period close / opening balance)", () => {
+  const range = { start: d("2026-10-01T00:00:00Z"), end: d("2026-10-31T23:59:59Z") };
+  const base = {
+    receipts: [
+      receipt("old", "2026-07-01T00:00:00Z", 10, 10), // covered by anchor
+      receipt("post", "2026-09-10T00:00:00Z", 20, 10), // after anchor: 200
+    ],
+    dispatches: [dispatch("dpost", "2026-09-20T00:00:00Z", 50)],
+    counts: [],
+    transfers: [],
+    range,
+  };
+
+  it("starts from the anchor value and ignores documents it covers", () => {
+    const r = computeFinancials({
+      ...base,
+      anchor: { kind: "close", asOf: d("2026-09-01T00:00:00Z"), value: 5000 },
+    });
+    expect(r.openingStock).toBe(5000 + 200 - 50);
+    expect(r.anchoredOn?.kind).toBe("close");
+  });
+
+  it("ignores an anchor dated after the period start", () => {
+    const r = computeFinancials({
+      ...base,
+      anchor: { kind: "close", asOf: d("2026-11-01T00:00:00Z"), value: 5000 },
+    });
+    expect(r.anchoredOn).toBeNull();
+    expect(r.openingStock).toBe(100 + 200 - 50);
+  });
+
+  it("an opening balance fixes an otherwise negative opening", () => {
+    const r = computeFinancials({
+      receipts: [],
+      dispatches: [dispatch("x", "2026-09-05T00:00:00Z", 100)],
+      counts: [],
+      transfers: [],
+      range,
+      anchor: { kind: "opening-balance", asOf: d("2026-09-01T00:00:00Z"), value: 1000 },
+    });
+    expect(r.openingStock).toBe(900);
+    expect(r.integrity.some((i) => i.id === "negative-opening")).toBe(false);
+  });
+
+  it("warns when closed history was edited after the close", () => {
+    const r = computeFinancials({
+      ...base,
+      receipts: [
+        { ...receipt("old", "2026-07-01T00:00:00Z", 10, 10), updatedAt: "2026-09-15T00:00:00Z" },
+      ],
+      anchor: {
+        kind: "close",
+        asOf: d("2026-09-01T00:00:00Z"),
+        value: 5000,
+        recordedAt: d("2026-09-02T00:00:00Z"),
+      },
+    });
+    expect(r.integrity.some((i) => i.id === "edited-after-close")).toBe(true);
+  });
+
+  it("reports documents without a valid date", () => {
+    const r = computeFinancials({
+      receipts: [{ _id: "nodate", status: "completed", receivedItems: [] }],
+      dispatches: [],
+      counts: [],
+      transfers: [],
+      range,
+    });
+    expect(r.integrity.some((i) => i.id === "undated-documents")).toBe(true);
+  });
+});
+
+describe("period helpers", () => {
+  it("previousRange has equal length and ends just before the start", () => {
+    const r = { start: d("2026-10-01T00:00:00Z"), end: d("2026-10-04T23:59:59.999Z") };
+    const p = previousRange(r);
+    expect(p.end.getTime()).toBe(r.start.getTime() - 1);
+    expect(p.end.getTime() - p.start.getTime()).toBe(r.end.getTime() - r.start.getTime());
+  });
+  it("percentChange handles zero/invalid previous values", () => {
+    expect(percentChange(110, 100)).toBeCloseTo(10);
+    expect(percentChange(50, 0)).toBeNull();
+    expect(percentChange(50, undefined)).toBeNull();
+    expect(percentChange(-50, -100)).toBeCloseTo(50);
+  });
+  it("monthKey / monthRange round trip", () => {
+    expect(monthKey(d("2026-09-15T12:00:00Z"))).toBe("2026-09");
+    const r = monthRange("2026-02");
+    expect(r.start.toISOString()).toBe("2026-02-01T00:00:00.000Z");
+    expect(r.end.toISOString()).toBe("2026-02-28T23:59:59.999Z");
+  });
+});
+
+describe("buildDrillRows", () => {
+  const range = { start: d("2026-09-01T00:00:00Z"), end: d("2026-09-30T23:59:59Z") };
+  const input = {
+    range,
+    receipts: [
+      receipt("r1", "2026-09-05T00:00:00Z", 100, 10),
+      receipt("r2", "2026-09-06T00:00:00Z", 10, 10),
+      receipt("rd", "2026-09-07T00:00:00Z", 5, 10, { status: "draft" }),
+      receipt("rz", "2026-09-08T00:00:00Z", 5, 0, {
+        receivedItems: [{ receivedQuantity: 5, unitPrice: 0, stockItem: { name: "Rice" } }],
+      }),
+    ],
+    dispatches: [
+      dispatch("d1", "2026-09-05T00:00:00Z", 300),
+      dispatch("dd", "2026-09-05T00:00:00Z", 999, { status: "draft", evidenceStatus: "pending" }),
+    ],
+    counts: [],
+  };
+  it("rows for a figure add up to that figure and are sorted by size", () => {
+    const rows = buildDrillRows("received", input);
+    expect(rows.map((r) => r.id)).toEqual(["r1", "r2", "rz"]);
+    const total = rows.reduce((s, r) => s + r.value, 0);
+    expect(total).toBe(computeFinancials({ ...input, transfers: [] }).periodPurchases);
+  });
+  it("lists excluded and unpriced documents with reasons", () => {
+    const ex = buildDrillRows("excluded", input);
+    expect(ex.map((r) => r.id).sort()).toEqual(["dd", "rd"]);
+    const un = buildDrillRows("unpriced", input);
+    expect(un[0].id).toBe("rz");
+    expect(un[0].note).toContain("Rice");
+  });
+  it("maps integrity issues to drill-down kinds", () => {
+    expect(drillKindForIssue("unpriced-lines")).toBe("unpriced");
+    expect(drillKindForIssue("live-stock-gap")).toBeNull();
+  });
+});
+
+describe("buildReconciliation", () => {
+  it("ranks items by the value of the gap between ledger and live stock", () => {
+    const rows = buildReconciliation({
+      receipts: [
+        { status: "completed", receivedItems: [{ receivedQuantity: 100, stockItem: { _id: "a" } }, { receivedQuantity: 10, stockItem: { _id: "b" } }] },
+      ],
+      dispatches: [
+        { status: "completed", evidenceStatus: "complete", dispatchedItems: [{ dispatchedQuantity: 40, stockItem: { _id: "a" } }] },
+      ],
+      counts: [
+        { status: "completed", countDate: "2026-09-01", countedItems: [{ stockItem: { _id: "b" }, countedQuantity: 8, variance: -2 }] },
+      ],
+      stockItems: [
+        { _id: "a", name: "Flour", currentStock: 60, unitPrice: 2 }, // ledger 60 -> gap 0
+        { _id: "b", name: "Oil", currentStock: 20, unitPrice: 50 }, // ledger 8 -> gap 12 (600)
+      ],
+    });
+    expect(rows[0].name).toBe("Oil");
+    expect(rows[0].gapQty).toBe(12);
+    expect(rows[0].gapValue).toBe(600);
+    expect(rows[0].lastCountQty).toBe(8);
+    expect(rows.find((r) => r.name === "Flour")!.gapQty).toBe(0);
+  });
+});
+
+import { buildIntegrityRows, toSummaryShape } from "@/lib/financialReport";
+
+describe("export parity", () => {
+  it("states attention required when there are warnings", () => {
+    const rows = buildIntegrityRows(
+      {
+        integrity: [{ id: "x", severity: "warning", title: "Unpriced", detail: "3 lines" }],
+        excluded: { receipts: 2, receiptsValue: 100.456, dispatches: 1, dispatchesCost: 50 },
+      },
+      { kind: "close", asOf: "2026-10-01T00:00:00.000Z" },
+    );
+    const flat = rows.map((r) => r.join("|")).join("\n");
+    expect(flat).toContain("ATTENTION REQUIRED");
+    expect(flat).toContain("WARNING: Unpriced|3 lines");
+    expect(flat).toContain("Closed period at 2026-10-01");
+    expect(flat).toContain("Excluded receipts value|100.46");
+  });
+  it("says clean when only info notes exist", () => {
+    const rows = buildIntegrityRows({ integrity: [{ id: "i", severity: "info", title: "t", detail: "d" }] });
+    expect(rows.map((r) => r.join("|")).join("\n")).toContain("No data-quality problems detected");
+  });
+});
+
+describe("toSummaryShape", () => {
+  it("maps the server response to the summary component's shape", () => {
+    const out = toSummaryShape({
+      financial: { openingStock: 1, closingStock: 9, grossProfit: 4, peopleFed: 7, counts: { dispatches: 3, receipts: 2, binCounts: 1 }, periodSales: 10 },
+      integrity: [],
+      previous: { periodSales: 5 },
+    })!;
+    expect(out.financial.closingStockValue).toBe(9);
+    expect(out.financial.grossProfitAfterVAT).toBe(4);
+    expect(out.summary.totalDispatches).toBe(3);
+    expect(out.previous.periodSales).toBe(5);
+    expect(toSummaryShape({})).toBeNull();
   });
 });
