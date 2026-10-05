@@ -31,6 +31,8 @@ Status key: **Done** = implemented and tested · **Later** = not built.
 | True lazy *fetching* per tab (Overview KPIs need POs, low stock and stock values, so only the Charts/Export tabs could defer, which they already do by mounting lazily),  saved views, scheduled summaries, anomaly flags, offline snapshot | Later | Section 7 |
 
 
+> **Platform limits.** Sanity is capped at **25,000 documents** on CaterFlow's plan; MongoDB Atlas M0 at 512 MB and about 1 GB/week transfer. Period closes and opening balances are stored in MongoDB for this reason. See `plans/2026-10-04-accuracy-audit-and-fix-plan.md` section 0.
+
 ---
 
 ## 1. What is wrong today
