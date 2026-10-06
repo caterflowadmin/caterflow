@@ -151,3 +151,34 @@ describe("report access rules", () => {
     expect(canViewReconciliation("siteManager")).toBe(false);
   });
 });
+
+import PeriodControls from "../../src/app/reports/PeriodControls";
+
+describe("PeriodControls opening balance suggestion", () => {
+  const suggestion = {
+    siteKey: "all", asOf: "2026-01-01", ledgerNow: -165921.52,
+    lowestPoint: { value: -208818.46, date: "2026-09-30" },
+    minimumToStayNonNegative: 208818.46, fromLiveStock: 300000, liveInventoryValue: 134078.48,
+    recommended: 300000, basis: "live-stock", notes: ["Live stock is the better estimate."],
+  };
+  beforeEach(() => {
+    (global as any).fetch = jest.fn((url: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(url.includes("suggest-opening-balance") ? suggestion : { anchors: [] }),
+      }),
+    );
+  });
+
+  it("calculates from the data and pre-fills the form", async () => {
+    wrap(<PeriodControls siteId={null} onChanged={() => {}} />);
+    fireEvent.click(screen.getByText("Period close"));
+    fireEvent.click(await screen.findByText("Calculate from my data"));
+    expect(await screen.findByText(/-SZL 208,818\.46/, { selector: "b" })).toBeInTheDocument();
+    const useButtons = screen.getAllByText("Use");
+    fireEvent.click(useButtons[1]); // live-stock figure
+    expect((screen.getByDisplayValue("300000") as HTMLInputElement).value).toBe("300000");
+    expect((screen.getByDisplayValue("2026-01-01") as HTMLInputElement).value).toBe("2026-01-01");
+  });
+});

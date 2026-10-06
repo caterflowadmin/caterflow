@@ -1093,3 +1093,120 @@ export function buildIntegrityRows(
   rows.push(["", ""], ["", ""]);
   return rows;
 }
+
+// ─── Opening-balance suggestion ────────────────────────────────────────────────
+
+export interface OpeningBalanceSuggestion {
+  /** First instant the ledger has any document; an opening balance belongs at or before it. */
+  asOf: string | null;
+  /** Lowest the cumulative ledger ever gets (no opening balance), and when. */
+  lowestPoint: { value: number; date: string } | null;
+  /** Smallest opening balance that stops the ledger ever going negative. */
+  minimumToStayNonNegative: number;
+  /** Ledger value now, with no opening balance. */
+  ledgerNow: number;
+  /** live stock value minus ledgerNow: the balance that makes the ledger agree with live stock. */
+  fromLiveStock: number | null;
+  liveInventoryValue: number | null;
+  /** The figure to pre-fill, and why. */
+  recommended: number;
+  basis: "live-stock" | "non-negative-minimum" | "none";
+  notes: string[];
+}
+
+/**
+ * Works out the stock value that must have existed before the first recorded
+ * document, from the documents themselves.
+ *
+ * Two independent estimates:
+ *  1. Non-negative minimum: stock can never be below zero, so the opening
+ *     balance must be at least the deepest dip of the running ledger.
+ *  2. Live-stock: if live inventory is right, opening = live - ledger now.
+ *     (Live stock is valued at current item prices while the ledger uses
+ *     document prices, so treat this as approximate.)
+ */
+export function suggestOpeningBalance(input: {
+  receipts: any[];
+  dispatches: any[];
+  counts: any[];
+  transfers: any[];
+  siteId?: string | null;
+  liveInventoryValue?: number | null;
+  now?: Date;
+}): OpeningBalanceSuggestion {
+  const now = input.now ?? new Date();
+  const events: { t: number; v: number }[] = [];
+  const push = (date: unknown, v: number) => {
+    const t = timeOf(date);
+    if (Number.isFinite(t) && t <= now.getTime() && Number.isFinite(v)) events.push({ t, v });
+  };
+
+  mergeById(input.receipts || [], [])
+    .filter(isEffectiveReceipt)
+    .forEach((r) => push(r.receiptDate ?? r.createdAt, receiptValue(r)));
+  mergeById(input.dispatches || [], [])
+    .filter(isEffectiveDispatch)
+    .forEach((d) => push(d.dispatchDate ?? d.createdAt, -dispatchCost(d)));
+  mergeById(input.counts || [], [])
+    .filter(isEffectiveCount)
+    .forEach((c) => push(c.countDate ?? c.createdAt, countVariance(c)));
+  mergeById(input.transfers || [], [])
+    .filter(isEffectiveTransfer)
+    .forEach((x) => push(x.transferDate ?? x.createdAt, netTransferValue([x], input.siteId)));
+
+  if (events.length === 0) {
+    return {
+      asOf: null, lowestPoint: null, minimumToStayNonNegative: 0, ledgerNow: 0,
+      fromLiveStock: null, liveInventoryValue: input.liveInventoryValue ?? null,
+      recommended: 0, basis: "none", notes: ["No completed documents to calculate from."],
+    };
+  }
+
+  // Receipts are applied before dispatches on the same instant so a same-day
+  // receipt-then-dispatch does not register as a dip.
+  events.sort((a, b) => a.t - b.t || b.v - a.v);
+  let run = 0;
+  let low = { value: 0, t: events[0].t };
+  for (const e of events) {
+    run += e.v;
+    if (run < low.value) low = { value: run, t: e.t };
+  }
+
+  const first = new Date(events[0].t);
+  const asOfDate = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), first.getUTCDate()));
+  const minimum = round2(Math.max(0, -low.value));
+  const live = input.liveInventoryValue;
+  const hasLive = typeof live === "number" && Number.isFinite(live) && live >= 0;
+  const fromLive = hasLive ? round2((live as number) - run) : null;
+
+  const notes: string[] = [];
+  let recommended = minimum;
+  let basis: OpeningBalanceSuggestion["basis"] = minimum > 0 ? "non-negative-minimum" : "none";
+
+  if (fromLive !== null && fromLive >= minimum) {
+    recommended = fromLive;
+    basis = "live-stock";
+    notes.push(
+      "Live stock is the better estimate: it also accounts for stock still on hand. It is valued at current item prices, so expect it to be approximate.",
+    );
+  } else if (fromLive !== null) {
+    notes.push(
+      `Live stock implies ${fromLive.toLocaleString()} but the ledger needs at least ${minimum.toLocaleString()} to stay non-negative, so the minimum is used. The gap suggests missing receipts or stock recorded at a different price.`,
+    );
+  } else {
+    notes.push("Live stock value was not available, so only the non-negative minimum is shown.");
+  }
+  if (minimum === 0) notes.push("The ledger never goes negative: no opening balance is strictly required.");
+
+  return {
+    asOf: asOfDate.toISOString().slice(0, 10),
+    lowestPoint: { value: round2(low.value), date: new Date(low.t).toISOString().slice(0, 10) },
+    minimumToStayNonNegative: minimum,
+    ledgerNow: round2(run),
+    fromLiveStock: fromLive,
+    liveInventoryValue: hasLive ? round2(live as number) : null,
+    recommended,
+    basis,
+    notes,
+  };
+}

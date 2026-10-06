@@ -62,6 +62,8 @@ export default function PeriodControls({ siteId, onChanged }: Props) {
   const [obDate, setObDate] = useState("");
   const [obValue, setObValue] = useState("");
   const [obNote, setObNote] = useState("");
+  const [suggestion, setSuggestion] = useState<any | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
   const [confirm, setConfirm] = useState<
     | { kind: "close"; force: boolean; issues?: string[] }
     | { kind: "reopen"; id: string; label: string }
@@ -135,6 +137,30 @@ export default function PeriodControls({ siteId, onChanged }: Props) {
     }
   };
 
+  // Work out, from the recorded documents, how much stock must have existed
+  // before the first one. Read-only: the administrator still has to save it.
+  const suggest = async () => {
+    setSuggesting(true);
+    try {
+      const res = await fetch(
+        `/api/reports/suggest-opening-balance?site=${encodeURIComponent(siteParam)}`,
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Server responded ${res.status}`);
+      setSuggestion(body);
+    } catch (e: any) {
+      setSuggestion(null);
+      toast({ title: "Could not calculate", description: e?.message, status: "error", duration: 6000, isClosable: true, position: "top" });
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  const applySuggestion = (value: number) => {
+    if (suggestion?.asOf) setObDate(suggestion.asOf);
+    setObValue(String(value));
+  };
+
   const doClose = async (force: boolean) => {
     const ok = await post({ action: "close", month, force });
     if (ok) toast({ title: `Closed ${month}`, status: "success", duration: 2500, position: "top" });
@@ -183,6 +209,50 @@ export default function PeriodControls({ siteId, onChanged }: Props) {
             <Text fontSize="xs" opacity={0.7} mb={2}>
               Use once, if stock existed before the first receipt in the system.
             </Text>
+            <Button size="sm" variant="outline" mb={3} onClick={suggest} isLoading={suggesting} minH="44px" w="100%">
+              Calculate from my data
+            </Button>
+            {suggestion && (
+              <Box borderWidth="1px" borderRadius="md" p={3} mb={3} fontSize="sm">
+                {suggestion.basis === "none" && suggestion.asOf === null ? (
+                  <Text>{suggestion.notes?.join(" ")}</Text>
+                ) : (
+                  <Stack spacing={2}>
+                    <Text>
+                      Without an opening balance the ledger is{" "}
+                      <b>{formatSZL(suggestion.ledgerNow)}</b> today. It was lowest at{" "}
+                      <b>{formatSZL(suggestion.lowestPoint?.value ?? 0)}</b> on{" "}
+                      {suggestion.lowestPoint?.date}.
+                    </Text>
+                    <Flex justify="space-between" align="center" gap={2}>
+                      <Text>
+                        Minimum to stay above zero: <b>{formatSZL(suggestion.minimumToStayNonNegative)}</b>
+                      </Text>
+                      <Button size="xs" onClick={() => applySuggestion(suggestion.minimumToStayNonNegative)}>
+                        Use
+                      </Button>
+                    </Flex>
+                    {suggestion.fromLiveStock !== null && (
+                      <Flex justify="space-between" align="center" gap={2}>
+                        <Text>
+                          To match live stock ({formatSZL(suggestion.liveInventoryValue)}):{" "}
+                          <b>{formatSZL(suggestion.fromLiveStock)}</b>
+                        </Text>
+                        <Button size="xs" onClick={() => applySuggestion(suggestion.fromLiveStock)}>
+                          Use
+                        </Button>
+                      </Flex>
+                    )}
+                    {(suggestion.notes || []).map((n: string) => (
+                      <Text key={n} fontSize="xs" opacity={0.75}>{n}</Text>
+                    ))}
+                    <Text fontSize="xs" opacity={0.75}>
+                      Pre-fills the form below, dated {suggestion.asOf}. Review it, then save.
+                    </Text>
+                  </Stack>
+                )}
+              </Box>
+            )}
             <Stack spacing={2}>
               <HStack>
                 <FormControl>
