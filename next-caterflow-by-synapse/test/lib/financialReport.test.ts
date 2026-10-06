@@ -257,6 +257,8 @@ describe("computeFinancials", () => {
       ...data,
       range: { start: sep.start, end: d("2026-10-04T23:59:59Z") },
       liveInventoryValue: 300,
+      // A trusted anchor means no baseline estimate, so the gap is reported.
+      anchor: { kind: "opening-balance", asOf: d("2026-01-01T00:00:00Z"), value: 0 },
       now: d("2026-10-04T12:00:00Z"),
     });
     expect(r.integrity.some((i) => i.id === "live-stock-gap")).toBe(true);
@@ -484,5 +486,136 @@ describe("toSummaryShape", () => {
     expect(out.summary.totalDispatches).toBe(3);
     expect(out.previous.periodSales).toBe(5);
     expect(toSummaryShape({})).toBeNull();
+  });
+});
+
+describe("live-stock baseline", () => {
+  const now = d("2026-10-06T12:00:00Z");
+  const docs = {
+    receipts: [receipt("r1", "2026-09-10T00:00:00Z", 100, 10)], // +1000
+    dispatches: [
+      dispatch("d1", "2026-09-15T00:00:00Z", 1500), // -1500
+      dispatch("d2", "2026-10-03T00:00:00Z", 500), // -500
+    ],
+    counts: [],
+    transfers: [],
+  };
+  const sep = { start: d("2026-09-01T00:00:00Z"), end: d("2026-09-30T23:59:59.999Z") };
+  const oct = { start: d("2026-10-01T00:00:00Z"), end: d("2026-10-06T23:59:59.999Z") };
+
+  it("is not applied without live stock: ledger stays negative and is flagged", () => {
+    const r = computeFinancials({ ...docs, range: sep, now });
+    expect(r.liveBaseline).toBe(0);
+    expect(r.closingStock).toBe(-500);
+    expect(r.integrity.map((i) => i.id)).toContain("negative-closing");
+  });
+
+  it("adds the shortfall between live stock and the full ledger as a baseline", () => {
+    // ledger to now = 1000 - 2000 = -1000; live = 800 -> baseline 1800
+    const r = computeFinancials({ ...docs, range: oct, now, liveInventoryValue: 800 });
+    expect(r.liveBaseline).toBe(1800);
+    expect(r.closingStock).toBeCloseTo(800, 2);
+    expect(r.openingStock).toBeCloseTo(1300, 2);
+    expect(r.integrity.map((i) => i.id)).toContain("estimated-baseline");
+    expect(r.integrity.map((i) => i.id)).not.toContain("negative-closing");
+  });
+
+  it("keeps opening(next) === closing(previous)", () => {
+    const a = computeFinancials({ ...docs, range: sep, now, liveInventoryValue: 800 });
+    const b = computeFinancials({ ...docs, range: oct, now, liveInventoryValue: 800 });
+    expect(b.openingStock).toBeCloseTo(a.closingStock, 2);
+  });
+
+  it("is skipped when a trusted anchor exists or the view is one site", () => {
+    const anchor = { kind: "opening-balance" as const, asOf: d("2026-01-01T00:00:00Z"), value: 5000 };
+    expect(
+      computeFinancials({ ...docs, range: oct, now, liveInventoryValue: 800, anchor }).liveBaseline,
+    ).toBe(0);
+    expect(
+      computeFinancials({ ...docs, range: oct, now, liveInventoryValue: 800, siteId: "s1" }).liveBaseline,
+    ).toBe(0);
+  });
+
+  it("never hides a still-negative period", () => {
+    // Live is tiny, so early history can still dip below zero; it must be reported.
+    const r = computeFinancials({
+      receipts: [receipt("r1", "2026-09-20T00:00:00Z", 100, 10)],
+      dispatches: [dispatch("d1", "2026-09-05T00:00:00Z", 900)],
+      counts: [],
+      transfers: [],
+      range: { start: d("2026-09-01T00:00:00Z"), end: d("2026-09-10T00:00:00Z") },
+      now,
+      liveInventoryValue: 100,
+    });
+    expect(r.closingStock).toBeLessThan(0);
+    expect(r.integrity.map((i) => i.id)).toContain("negative-closing");
+  });
+});
+
+import { suggestOpeningBalance } from "@/lib/financialReport";
+
+describe("suggestOpeningBalance", () => {
+  const now = new Date("2026-10-06T12:00:00Z");
+  const rcpt = (id: string, date: string, v: number) => ({ _id: id, status: "completed", receiptDate: date, receivedItems: [{ receivedQuantity: 1, unitPrice: v }] });
+  const disp = (id: string, date: string, c: number) => ({ _id: id, status: "completed", evidenceStatus: "complete", dispatchDate: date, totalCost: c });
+
+  const docs = {
+    receipts: [rcpt("r1", "2026-08-01T08:00:00Z", 100), rcpt("r2", "2026-09-10T08:00:00Z", 500)],
+    dispatches: [disp("d1", "2026-08-05T08:00:00Z", 400), disp("d2", "2026-09-20T08:00:00Z", 300)],
+    counts: [], transfers: [],
+  };
+
+  it("finds the deepest dip and the date it happened", () => {
+    // 100 -> -300 (5 Aug) -> +200 (10 Sep) -> -100 (20 Sep)
+    const s = suggestOpeningBalance({ ...docs, now });
+    expect(s.lowestPoint).toEqual({ value: -300, date: "2026-08-05" });
+    expect(s.minimumToStayNonNegative).toBe(300);
+    expect(s.ledgerNow).toBe(-100);
+    expect(s.asOf).toBe("2026-08-01");
+  });
+
+  it("uses live stock when it is consistent with the non-negative minimum", () => {
+    const s = suggestOpeningBalance({ ...docs, liveInventoryValue: 450, now });
+    expect(s.fromLiveStock).toBe(550); // 450 - (-100)
+    expect(s.recommended).toBe(550);
+    expect(s.basis).toBe("live-stock");
+  });
+
+  it("falls back to the minimum when live stock implies less than the ledger needs", () => {
+    const s = suggestOpeningBalance({ ...docs, liveInventoryValue: 100, now });
+    expect(s.fromLiveStock).toBe(200);
+    expect(s.recommended).toBe(300);
+    expect(s.basis).toBe("non-negative-minimum");
+    expect(s.notes.join(" ")).toMatch(/missing receipts/);
+  });
+
+  it("recommends the minimum when no live value is given", () => {
+    const s = suggestOpeningBalance({ ...docs, now });
+    expect(s.recommended).toBe(300);
+    expect(s.fromLiveStock).toBeNull();
+  });
+
+  it("ignores drafts, duplicates and future documents", () => {
+    const s = suggestOpeningBalance({
+      receipts: [rcpt("r1", "2026-08-01T00:00:00Z", 100), rcpt("r1", "2026-08-01T00:00:00Z", 100), { ...rcpt("rd", "2026-08-02T00:00:00Z", 999), status: "draft" }, rcpt("rf", "2026-12-01T00:00:00Z", 999)],
+      dispatches: [], counts: [], transfers: [], now,
+    });
+    expect(s.ledgerNow).toBe(100);
+    expect(s.minimumToStayNonNegative).toBe(0);
+  });
+
+  it("does not treat same-instant receipt then dispatch as a dip", () => {
+    const s = suggestOpeningBalance({
+      receipts: [rcpt("r", "2026-08-01T10:00:00Z", 100)],
+      dispatches: [disp("d", "2026-08-01T10:00:00Z", 100)],
+      counts: [], transfers: [], now,
+    });
+    expect(s.minimumToStayNonNegative).toBe(0);
+  });
+
+  it("reports nothing to calculate from when there are no documents", () => {
+    const s = suggestOpeningBalance({ receipts: [], dispatches: [], counts: [], transfers: [], now });
+    expect(s.basis).toBe("none");
+    expect(s.asOf).toBeNull();
   });
 });

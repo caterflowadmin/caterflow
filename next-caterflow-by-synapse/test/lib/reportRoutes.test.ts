@@ -2,7 +2,10 @@
  * @jest-environment node
  */
 jest.mock("@/lib/siteFiltering", () => ({ getUserSiteInfo: jest.fn() }));
-jest.mock("@/lib/reportData", () => ({ loadLedgerDocs: jest.fn() }));
+jest.mock("@/lib/reportData", () => ({
+  loadLedgerDocs: jest.fn(),
+  loadLiveInventoryValue: jest.fn().mockResolvedValue(null),
+}));
 jest.mock("@/lib/reportAnchors", () => ({
   getLatestAnchor: jest.fn(),
   listAnchors: jest.fn(),
@@ -16,7 +19,8 @@ jest.mock("@/lib/auth", () => ({ authOptions: {} }));
 import { GET as financialsGET } from "@/app/api/reports/financials/route";
 import { GET as closeGET, POST as closePOST } from "@/app/api/reports/period-close/route";
 import { getUserSiteInfo } from "@/lib/siteFiltering";
-import { loadLedgerDocs } from "@/lib/reportData";
+import { loadLedgerDocs, loadLiveInventoryValue } from "@/lib/reportData";
+import { GET as suggestGET } from "@/app/api/reports/suggest-opening-balance/route";
 import { getLatestAnchor, listAnchors, saveAnchor, reopenAnchor } from "@/lib/reportAnchors";
 import { getServerSession } from "next-auth";
 
@@ -139,5 +143,38 @@ describe("/api/reports/period-close", () => {
     (reopenAnchor as jest.Mock).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     expect((await post({ action: "reopen", id: "a" })).status).toBe(200);
     expect((await post({ action: "reopen", id: "gone" })).status).toBe(404);
+  });
+});
+
+describe("GET /api/reports/suggest-opening-balance", () => {
+  const url = "/api/reports/suggest-opening-balance";
+  const negDocs = () => docs({
+    receipts: [{ _id: "r", status: "completed", receiptDate: "2026-08-01T00:00:00Z", receivedItems: [{ receivedQuantity: 1, unitPrice: 100 }] }],
+    dispatches: [{ _id: "d", status: "completed", evidenceStatus: "complete", dispatchDate: "2026-08-05T00:00:00Z", totalCost: 400 }],
+  });
+
+  it("suggests the opening balance from the ledger and live stock", async () => {
+    (loadLedgerDocs as jest.Mock).mockResolvedValue(negDocs());
+    (loadLiveInventoryValue as jest.Mock).mockResolvedValue(450);
+    const body = await (await suggestGET(req(url))).json();
+    expect(body.minimumToStayNonNegative).toBe(300);
+    expect(body.fromLiveStock).toBe(750); // 450 - (-300)
+    expect(body.recommended).toBe(750);
+    expect(body.asOf).toBe("2026-08-01");
+  });
+  it("does not use live stock for a single-site view", async () => {
+    (loadLedgerDocs as jest.Mock).mockResolvedValue(negDocs());
+    await suggestGET(req(`${url}?site=s1`));
+    expect(loadLiveInventoryValue).not.toHaveBeenCalled();
+  });
+  it("is administrators only", async () => {
+    (getServerSession as jest.Mock).mockResolvedValue({ user: { id: "u2", role: "auditor" } });
+    expect((await suggestGET(req(url))).status).toBe(403);
+    (getServerSession as jest.Mock).mockResolvedValue(null);
+    expect((await suggestGET(req(url))).status).toBe(401);
+  });
+  it("refuses to guess from partial data", async () => {
+    (loadLedgerDocs as jest.Mock).mockResolvedValue(docs({ failed: ["dispatches"] }));
+    expect((await suggestGET(req(url))).status).toBe(503);
   });
 });
