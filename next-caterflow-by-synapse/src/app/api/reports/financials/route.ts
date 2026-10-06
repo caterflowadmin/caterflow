@@ -12,7 +12,7 @@ import {
   previousRange,
 } from "@/lib/financialReport";
 import { parseDateRangeBoundary } from "@/lib/dateRangeUtils";
-import { loadLedgerDocs } from "@/lib/reportData";
+import { loadLedgerDocs, loadLiveInventoryValue } from "@/lib/reportData";
 import { getLatestAnchor, toLedgerAnchor } from "@/lib/reportAnchors";
 import { canViewFinance } from "@/lib/reportAccess";
 
@@ -65,7 +65,18 @@ export async function GET(request: Request) {
   }
   const anchor = anchorDoc ? toLedgerAnchor(anchorDoc) : null;
 
-  const result = computeFinancials({ ...docs, range, siteId, anchor });
+  // With no closed period / opening balance the ledger has no starting point,
+  // so live stock is used to estimate the missing baseline (all sites only).
+  const liveInventoryValue =
+    !anchor && !siteId ? await loadLiveInventoryValue() : null;
+
+  const result = computeFinancials({
+    ...docs,
+    range,
+    siteId,
+    anchor,
+    liveInventoryValue,
+  });
   const prevRange = previousRange(range);
   let prevAnchor = null;
   try {
@@ -79,6 +90,7 @@ export async function GET(request: Request) {
     range: prevRange,
     siteId,
     anchor: prevAnchor,
+    liveInventoryValue,
   });
 
   const finance = canViewFinance(info.userRole);

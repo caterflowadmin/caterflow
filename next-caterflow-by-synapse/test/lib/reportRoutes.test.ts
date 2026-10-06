@@ -2,7 +2,10 @@
  * @jest-environment node
  */
 jest.mock("@/lib/siteFiltering", () => ({ getUserSiteInfo: jest.fn() }));
-jest.mock("@/lib/reportData", () => ({ loadLedgerDocs: jest.fn() }));
+jest.mock("@/lib/reportData", () => ({
+  loadLedgerDocs: jest.fn(),
+  loadLiveInventoryValue: jest.fn().mockResolvedValue(null),
+}));
 jest.mock("@/lib/reportAnchors", () => ({
   getLatestAnchor: jest.fn(),
   listAnchors: jest.fn(),

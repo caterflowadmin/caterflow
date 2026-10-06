@@ -257,6 +257,8 @@ describe("computeFinancials", () => {
       ...data,
       range: { start: sep.start, end: d("2026-10-04T23:59:59Z") },
       liveInventoryValue: 300,
+      // A trusted anchor means no baseline estimate, so the gap is reported.
+      anchor: { kind: "opening-balance", asOf: d("2026-01-01T00:00:00Z"), value: 0 },
       now: d("2026-10-04T12:00:00Z"),
     });
     expect(r.integrity.some((i) => i.id === "live-stock-gap")).toBe(true);
@@ -484,5 +486,68 @@ describe("toSummaryShape", () => {
     expect(out.summary.totalDispatches).toBe(3);
     expect(out.previous.periodSales).toBe(5);
     expect(toSummaryShape({})).toBeNull();
+  });
+});
+
+describe("live-stock baseline", () => {
+  const now = d("2026-10-06T12:00:00Z");
+  const docs = {
+    receipts: [receipt("r1", "2026-09-10T00:00:00Z", 100, 10)], // +1000
+    dispatches: [
+      dispatch("d1", "2026-09-15T00:00:00Z", 1500), // -1500
+      dispatch("d2", "2026-10-03T00:00:00Z", 500), // -500
+    ],
+    counts: [],
+    transfers: [],
+  };
+  const sep = { start: d("2026-09-01T00:00:00Z"), end: d("2026-09-30T23:59:59.999Z") };
+  const oct = { start: d("2026-10-01T00:00:00Z"), end: d("2026-10-06T23:59:59.999Z") };
+
+  it("is not applied without live stock: ledger stays negative and is flagged", () => {
+    const r = computeFinancials({ ...docs, range: sep, now });
+    expect(r.liveBaseline).toBe(0);
+    expect(r.closingStock).toBe(-500);
+    expect(r.integrity.map((i) => i.id)).toContain("negative-closing");
+  });
+
+  it("adds the shortfall between live stock and the full ledger as a baseline", () => {
+    // ledger to now = 1000 - 2000 = -1000; live = 800 -> baseline 1800
+    const r = computeFinancials({ ...docs, range: oct, now, liveInventoryValue: 800 });
+    expect(r.liveBaseline).toBe(1800);
+    expect(r.closingStock).toBeCloseTo(800, 2);
+    expect(r.openingStock).toBeCloseTo(1300, 2);
+    expect(r.integrity.map((i) => i.id)).toContain("estimated-baseline");
+    expect(r.integrity.map((i) => i.id)).not.toContain("negative-closing");
+  });
+
+  it("keeps opening(next) === closing(previous)", () => {
+    const a = computeFinancials({ ...docs, range: sep, now, liveInventoryValue: 800 });
+    const b = computeFinancials({ ...docs, range: oct, now, liveInventoryValue: 800 });
+    expect(b.openingStock).toBeCloseTo(a.closingStock, 2);
+  });
+
+  it("is skipped when a trusted anchor exists or the view is one site", () => {
+    const anchor = { kind: "opening-balance" as const, asOf: d("2026-01-01T00:00:00Z"), value: 5000 };
+    expect(
+      computeFinancials({ ...docs, range: oct, now, liveInventoryValue: 800, anchor }).liveBaseline,
+    ).toBe(0);
+    expect(
+      computeFinancials({ ...docs, range: oct, now, liveInventoryValue: 800, siteId: "s1" }).liveBaseline,
+    ).toBe(0);
+  });
+
+  it("never hides a still-negative period", () => {
+    // Live is tiny, so early history can still dip below zero; it must be reported.
+    const r = computeFinancials({
+      receipts: [receipt("r1", "2026-09-20T00:00:00Z", 100, 10)],
+      dispatches: [dispatch("d1", "2026-09-05T00:00:00Z", 900)],
+      counts: [],
+      transfers: [],
+      range: { start: d("2026-09-01T00:00:00Z"), end: d("2026-09-10T00:00:00Z") },
+      now,
+      liveInventoryValue: 100,
+    });
+    expect(r.closingStock).toBeLessThan(0);
+    expect(r.integrity.map((i) => i.id)).toContain("negative-closing");
   });
 });

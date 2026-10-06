@@ -46,7 +46,11 @@ export interface FinancialInput {
   range: { start: Date; end: Date };
   /** Site the data is scoped to (null/"all" = every site). */
   siteId?: string | null;
-  /** Live sum(currentStock x unitPrice) used for the reconciliation check. */
+  /**
+   * Live sum(currentStock x unitPrice). Used for the reconciliation check and,
+   * for an all-sites view with no closed period / opening balance, to estimate
+   * the missing opening baseline (see `liveBaseline`).
+   */
   liveInventoryValue?: number | null;
   /** "Now", injectable for tests. */
   now?: Date;
@@ -61,6 +65,12 @@ export interface FinancialResult {
   netVariances: number;
   netTransfers: number;
   closingStock: number;
+  /**
+   * Estimated stock that existed before the first recorded document, derived
+   * as live inventory minus the full document ledger. Already included in
+   * `openingStock` and `closingStock`; 0 when not applied.
+   */
+  liveBaseline: number;
   periodSales: number;
   peopleFed: number;
   vatOnPurchases: number;
@@ -343,7 +353,45 @@ export function computeFinancials(input: FinancialInput): FinancialResult {
     ),
     siteId,
   );
+
+  // ── Baseline estimate ──
+  // With no trusted anchor, the ledger starts from zero and so ignores any
+  // stock that existed before the first recorded document. Live inventory is
+  // the physical record, so the shortfall between it and the full ledger (all
+  // effective documents up to now) is the missing baseline. Adding the same
+  // constant to every period keeps opening(next) === closing(this) intact and
+  // makes the ledger land on live stock today. It is surfaced as an explicit
+  // estimate, never silently clamped.
+  const liveValue = input.liveInventoryValue;
+  const allSites = !siteId || siteId === "all";
+  let liveBaseline = 0;
+  if (
+    !anchor &&
+    allSites &&
+    typeof liveValue === "number" &&
+    Number.isFinite(liveValue) &&
+    liveValue > 0
+  ) {
+    const nowMs = now.getTime();
+    const upToNow = (value: unknown): boolean => {
+      const t = timeOf(value);
+      return Number.isFinite(t) && t <= nowMs;
+    };
+    const toNow = sumLedger(
+      receipts.filter((r) => upToNow(r.receiptDate ?? r.createdAt)),
+      dispatches.filter((d) => upToNow(d.dispatchDate ?? d.createdAt)),
+      counts.filter((c) => upToNow(c.countDate ?? c.createdAt)),
+      transfers.filter((t) => upToNow(t.transferDate ?? t.createdAt)),
+      siteId,
+    );
+    liveBaseline = round2(
+      liveValue -
+        (toNow.purchases - toNow.consumption + toNow.variances + toNow.transfers),
+    );
+  }
+
   const openingStock =
+    liveBaseline +
     (anchor ? anchor.value : 0) +
     opening.purchases -
     opening.consumption +
@@ -429,6 +477,17 @@ export function computeFinancials(input: FinancialInput): FinancialResult {
       title: "Closing stock is negative",
       detail:
         "Consumption exceeds everything received. Check for missing receipts or dispatches recorded against the wrong site.",
+    });
+  }
+
+  if (Math.abs(liveBaseline) >= 0.005) {
+    integrity.push({
+      id: "estimated-baseline",
+      severity: "warning",
+      title: "Opening stock includes an estimated baseline",
+      detail: `No opening balance or closed period exists, so SZL ${round2(
+        liveBaseline,
+      ).toLocaleString()} (live inventory less everything the documents explain) was added as the stock held before the first recorded document. Record a real opening balance to replace this estimate.`,
     });
   }
 
@@ -541,7 +600,7 @@ export function computeFinancials(input: FinancialInput): FinancialResult {
 
   // Reconciliation against live stock — only meaningful when the period runs
   // up to "now" (a historical period cannot be compared with today's stock).
-  const live = input.liveInventoryValue;
+  const live = liveBaseline === 0 ? input.liveInventoryValue : null;
   const endsNow = range.end.getTime() >= now.getTime() - 36 * 3600 * 1000;
   if (
     typeof live === "number" &&
@@ -573,6 +632,7 @@ export function computeFinancials(input: FinancialInput): FinancialResult {
     netVariances: period.variances,
     netTransfers: period.transfers,
     closingStock,
+    liveBaseline,
     periodSales,
     peopleFed,
     vatOnPurchases,

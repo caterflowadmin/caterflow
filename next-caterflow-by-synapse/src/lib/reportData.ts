@@ -60,3 +60,22 @@ export async function loadLedgerDocs(
     failed,
   };
 }
+
+/**
+ * Live inventory value (sum of current stock x unit price) across all sites,
+ * or null when it cannot be read. Only used to estimate a missing opening
+ * baseline, so a failure degrades to "no estimate" rather than an error.
+ */
+export async function loadLiveInventoryValue(): Promise<number | null> {
+  try {
+    const sv = await import("@/app/api/analytics/stock-values/route");
+    const res = (await sv.GET()) as Response;
+    if (!res.ok) throw new Error(`stock-values responded ${res.status}`);
+    const body = await res.json();
+    const value = Number(body?.summary?.totalInventoryValue);
+    return Number.isFinite(value) ? value : null;
+  } catch (error) {
+    console.warn("reportData: could not read live inventory value", error);
+    return null;
+  }
+}
