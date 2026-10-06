@@ -5,113 +5,31 @@ import { logger } from '@/lib/logger';
  */
 
 /**
- * Fetch the most recent unit price for an item from goods receipts in a specific bin.
- * Uses receipts as the source of truth (latest received price).
- * Falls back to stock item default price if not found in receipts.
- */
-export async function getRecentUnitPriceForItemInBin(
-  itemId: string,
-  binId: string,
-  fallbackPrice?: number,
-): Promise<number> {
-  try {
-    const response = await fetch("/api/goods-receipts");
-    if (!response.ok) throw new Error("Failed to fetch receipts");
-
-    const receipts = await response.json();
-
-    // Filter receipts for this bin
-    const receiptsForBin = receipts.filter((receipt: any) => {
-      if (!receipt.receivedItems || !Array.isArray(receipt.receivedItems))
-        return false;
-      return receipt.receivedItems.some((item: any) => {
-        const itemBin = item.receivingBin
-          ? item.receivingBin._id || item.receivingBin
-          : receipt.receivingBin
-            ? receipt.receivingBin._id || receipt.receivingBin
-            : null;
-        return itemBin === binId;
-      });
-    });
-
-    // Find the most recent price for this item
-    for (const receipt of receiptsForBin) {
-      const receivedItem = receipt.receivedItems.find((item: any) => {
-        const itemId_ =
-          typeof item.stockItem === "string"
-            ? item.stockItem
-            : item.stockItem?._id;
-        return itemId_ === itemId && item.unitPrice;
-      });
-      if (receivedItem?.unitPrice) {
-        return receivedItem.unitPrice;
-      }
-    }
-  } catch (error) {
-    console.error(
-      `Failed to fetch unit price for item ${itemId} in bin ${binId}:`,
-      error,
-    );
-  }
-
-  return fallbackPrice ?? 0;
-}
-
-/**
- * Batch fetch recent unit prices for multiple items in a bin.
- * More efficient than calling getRecentUnitPriceForItemInBin for each item.
+ * Batch fetch the most recent received unit price for items in a bin.
+ *
+ * Asks the server for just those prices (POST /api/goods-receipts/recent-prices)
+ * instead of downloading the entire goods-receipt history and scanning it in
+ * the browser. Receipts are the source of truth; items without a receipt price
+ * are simply absent from the result so callers can fall back to the item's
+ * default price via `resolveUnitPrice`.
  */
 export async function getRecentUnitPricesForItemsInBin(
   itemIds: string[],
   binId: string,
 ): Promise<Record<string, number>> {
-  const priceMap: Record<string, number> = {};
-
-  if (!itemIds.length) return priceMap;
+  if (!itemIds.length || !binId) return {};
 
   try {
-    const response = await fetch("/api/goods-receipts");
-    if (!response.ok) throw new Error("Failed to fetch receipts");
-
-    const receipts = await response.json();
-
-    // Filter receipts for this bin
-    const receiptsForBin = receipts.filter((receipt: any) => {
-      if (!receipt.receivedItems || !Array.isArray(receipt.receivedItems))
-        return false;
-      return receipt.receivedItems.some((item: any) => {
-        const itemBin = item.receivingBin
-          ? item.receivingBin._id || item.receivingBin
-          : receipt.receivingBin
-            ? receipt.receivingBin._id || receipt.receivingBin
-            : null;
-        return itemBin === binId;
-      });
+    const response = await fetch("/api/goods-receipts/recent-prices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ binId, itemIds }),
     });
+    if (!response.ok) throw new Error(`Failed to fetch prices (${response.status})`);
 
-    // Find prices for requested items (receipts are sorted newest first)
-    receiptsForBin.forEach((receipt: any) => {
-      if (receipt.receivedItems && Array.isArray(receipt.receivedItems)) {
-        receipt.receivedItems.forEach((receivedItem: any) => {
-          const itemId =
-            typeof receivedItem.stockItem === "string"
-              ? receivedItem.stockItem
-              : receivedItem.stockItem?._id;
-
-          // Only use the first (most recent) price found for each item
-          if (
-            itemIds.includes(itemId) &&
-            receivedItem.unitPrice &&
-            !priceMap[itemId]
-          ) {
-            priceMap[itemId] = receivedItem.unitPrice;
-          }
-        });
-      }
-    });
-
-    logger.debug("📊 Unit prices fetched from receipts:", priceMap);
-    return priceMap;
+    const { prices } = await response.json();
+    logger.debug("📊 Unit prices fetched from receipts:", prices);
+    return prices || {};
   } catch (error) {
     console.error(
       `Failed to batch fetch unit prices for items in bin ${binId}:`,
@@ -119,6 +37,16 @@ export async function getRecentUnitPricesForItemsInBin(
     );
     return {};
   }
+}
+
+/** Single-item convenience wrapper around the batch lookup. */
+export async function getRecentUnitPriceForItemInBin(
+  itemId: string,
+  binId: string,
+  fallbackPrice?: number,
+): Promise<number> {
+  const prices = await getRecentUnitPricesForItemsInBin([itemId], binId);
+  return prices[itemId] ?? fallbackPrice ?? 0;
 }
 
 /**

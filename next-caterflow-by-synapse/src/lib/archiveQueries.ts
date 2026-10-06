@@ -121,6 +121,73 @@ export async function getArchivedGoodsReceipts(options: {
     .toArray();
 }
 
+/**
+ * Latest received unit price per item for receipts into `binId`, read from the
+ * archive. Targeted (index-friendly filter + projection + sort + cap) instead
+ * of loading every archived receipt.
+ */
+export async function getArchivedReceiptPrices(options: {
+  binId: string;
+  itemIds: string[];
+  userSiteId: string | null;
+  canAccessMultipleSites: boolean;
+}): Promise<Record<string, number>> {
+  const db = await getArchiveDb();
+
+  const and: Filter<any>[] = [
+    {
+      $or: [
+        { "receivingBin._id": options.binId },
+        { "receivedItems.receivingBin._id": options.binId },
+      ],
+    },
+    { "receivedItems.stockItem._id": { $in: options.itemIds } },
+  ];
+  if (!options.canAccessMultipleSites) {
+    and.push(
+      options.userSiteId
+        ? {
+            $or: [
+              { "purchaseOrder.site._id": options.userSiteId },
+              { "receivedItems.receivingBin.site._id": options.userSiteId },
+            ],
+          }
+        : { _id: null },
+    );
+  }
+
+  const docs = await db
+    .collection(COLLECTIONS.GOODS_RECEIPTS)
+    .find({ $and: and })
+    .project({
+      receiptDate: 1,
+      "receivingBin._id": 1,
+      "receivedItems.stockItem._id": 1,
+      "receivedItems.unitPrice": 1,
+      "receivedItems.receivingBin._id": 1,
+    })
+    .sort({ receiptDate: -1 })
+    .limit(500)
+    .toArray();
+
+  const wanted = new Set(options.itemIds);
+  const prices: Record<string, number> = {};
+  for (const doc of docs) {
+    const docBin = doc.receivingBin?._id;
+    const items: any[] = doc.receivedItems || [];
+    // Same rule as the live path: the receipt counts when any item resolves to this bin.
+    const inBin = items.some((i) => (i.receivingBin?._id ?? docBin) === options.binId);
+    if (!inBin) continue;
+    for (const it of items) {
+      const id = typeof it.stockItem === "string" ? it.stockItem : it.stockItem?._id;
+      if (id && wanted.has(id) && it.unitPrice && prices[id] === undefined) {
+        prices[id] = it.unitPrice;
+      }
+    }
+  }
+  return prices;
+}
+
 export async function getArchivedGoodsReceiptById(id: string) {
   const db = await getArchiveDb();
   return db.collection(COLLECTIONS.GOODS_RECEIPTS).findOne({

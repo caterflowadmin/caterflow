@@ -32,8 +32,7 @@ import {
 } from '@chakra-ui/react';
 import { FiPlus, FiX, FiCheck } from 'react-icons/fi';
 import { StockItem, Supplier, Site } from '@/lib/sanityTypes';
-import { client } from '@/lib/sanity';
-import { groq } from 'next-sanity';
+import { cachedFetch } from '@/lib/clientCache';
 
 // Define the OrderItem interface here instead of importing it
 interface OrderItem {
@@ -123,17 +122,11 @@ export default function CreatePurchaseOrderModal({
     const fetchAvailableItems = async () => {
         setLoadingItems(true);
         try {
-            const query = groq`*[_type == "StockItem"] {
-                _id,
-                name,
-                sku,
-                unitOfMeasure,
-                unitPrice,
-                primarySupplier->{_id, name},
-                suppliers[]->{_id, name},
-                category->{_id, title}
-            }`;
-            const items = await client.fetch(query);
+            // Served by the authenticated, cached API (same fields as the old
+            // direct-from-browser Sanity query, which bypassed both).
+            const res = await cachedFetch('/api/stock-items');
+            if (!res.ok) throw new Error(`Failed to fetch stock items (${res.status})`);
+            const items = await res.json();
             setAvailableItems(items);
         } catch (error) {
             console.error('Failed to fetch stock items:', error);
@@ -151,8 +144,9 @@ export default function CreatePurchaseOrderModal({
 
     const fetchCategories = async () => {
         try {
-            const query = groq`*[_type == "Category"] { _id, title }`;
-            const categories = await client.fetch(query);
+            const res = await cachedFetch('/api/categories');
+            if (!res.ok) throw new Error(`Failed to fetch categories (${res.status})`);
+            const categories = await res.json();
             setCategories(categories);
         } catch (error) {
             console.error('Failed to fetch categories:', error);

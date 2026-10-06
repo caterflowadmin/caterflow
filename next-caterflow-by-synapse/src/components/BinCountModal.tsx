@@ -619,11 +619,11 @@ export default function BinCountModal({
 
     setIsProcessing(true);
     try {
-      const response = await fetch("/api/bin-counts");
-      if (!response.ok) throw new Error("Failed to fetch bin counts");
+      // Fetch just the one count (this used to download every bin count ever recorded).
+      const response = await fetch(`/api/bin-counts/${encodeURIComponent(countId)}`);
+      if (response.status !== 404 && !response.ok) throw new Error("Failed to fetch bin count");
 
-      const allCounts = await response.json();
-      const brokenCount = allCounts.find((count: any) => count._id === countId);
+      const brokenCount = response.ok ? await response.json() : null;
 
       if (!brokenCount) {
         toast({

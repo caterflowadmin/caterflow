@@ -104,31 +104,31 @@ export default function StockItemSelectorModal({
     const fetchStockItems = useCallback(async () => {
         setLoading(true);
         try {
-            const binsRes = await cachedFetch('/api/bins');
-            if (binsRes.ok) {
-                const binsData = await binsRes.json();
-                setAllBins(binsData);
-            }
-
-            // 1. First, fetch items quickly without stock data
-            const url = sourceBinId ? `/api/stock-items?binId=${sourceBinId}` : '/api/stock-items';
-            const itemsRes = await fetch(url);
+            // Bins, items and categories are independent: load them together
+            // (previously three requests in series). All three are cached, so
+            // re-opening the modal is instant. (`/api/stock-items` ignores any
+            // binId param, so it is requested without one to share the cache.)
+            const [binsRes, itemsRes, categoriesRes] = await Promise.all([
+                cachedFetch('/api/bins'),
+                cachedFetch('/api/stock-items'),
+                cachedFetch('/api/categories'),
+            ]);
 
             if (!itemsRes.ok) {
                 throw new Error('Failed to fetch stock items');
             }
 
-            let itemsData = await itemsRes.json();
+            const [binsData, itemsData, categoriesData] = await Promise.all([
+                binsRes.ok ? binsRes.json() : Promise.resolve(null),
+                itemsRes.json(),
+                categoriesRes.ok ? categoriesRes.json() : Promise.resolve(null),
+            ]);
 
-            // Set items immediately so modal shows quickly
+            if (binsData) setAllBins(binsData);
+            if (categoriesData) setCategories(categoriesData);
+
+            // Show items immediately; stock quantities follow in the background.
             setStockItems(itemsData);
-
-            // Fetch categories in parallel
-            const categoriesRes = await cachedFetch('/api/categories');
-            if (categoriesRes.ok) {
-                const categoriesData = await categoriesRes.json();
-                setCategories(categoriesData);
-            }
 
             // 2. Then, fetch stock data in the background
             if (sourceBinId && itemsData.length > 0) {

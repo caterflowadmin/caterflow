@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { client } from '@/lib/sanity';
 import { groq } from 'next-sanity';
+import { cachedLookup } from '@/lib/lookupCache';
 
 export async function GET() {
     try {
@@ -10,7 +11,7 @@ export async function GET() {
             description
         } | order(title asc)`;
 
-        const categories = await client.fetch(query);
+        const categories = await cachedLookup('categories', [], () => client.fetch(query), 120);
         return NextResponse.json(categories);
     } catch (error) {
         console.error('Failed to fetch categories:', error);

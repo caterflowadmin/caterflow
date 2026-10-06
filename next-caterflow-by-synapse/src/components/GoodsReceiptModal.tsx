@@ -370,10 +370,16 @@ export default function GoodsReceiptModal({
             }));
           }
 
-          const itemsWithCurrentPrices = await fetchCurrentStockItemPrices(
-            fullReceiptData.receivedItems || [],
-            fullReceiptData.receivingBin?._id || "",
-          );
+          // Prices and the site's bins are independent: fetch them together.
+          const [itemsWithCurrentPrices] = await Promise.all([
+            fetchCurrentStockItemPrices(
+              fullReceiptData.receivedItems || [],
+              fullReceiptData.receivingBin?._id || "",
+            ),
+            fullReceiptData.purchaseOrder?.site?._id
+              ? fetchBinsForSite(fullReceiptData.purchaseOrder.site._id)
+              : Promise.resolve(),
+          ]);
           fullReceiptData.receivedItems = itemsWithCurrentPrices;
 
           setFormData(fullReceiptData);
@@ -392,9 +398,6 @@ export default function GoodsReceiptModal({
           const assignedBinIds = Object.values(assignments);
           setSelectedBinIds(Array.from(new Set(assignedBinIds)));
 
-          if (fullReceiptData.purchaseOrder?.site?._id) {
-            await fetchBinsForSite(fullReceiptData.purchaseOrder.site._id);
-          }
         } catch (error) {
           toast({
             title: "Error",

@@ -241,6 +241,10 @@ export default function TransferModal({
         // The server enforces role-based access; falls back to own-site on 403.
         logger.debug("🗄️ Fetching bins (all sites for transfer)...");
         let binsData: any[] = [];
+        // The transfer detail doesn't depend on the bins: start both together.
+        const transferPromise: Promise<Response | null> = transfer?._id
+          ? fetch(`/api/operations/transfers/${transfer._id}`)
+          : Promise.resolve(null);
         const allBinsRes = await cachedFetch("/api/bins?allowAll=true");
         if (allBinsRes.ok) {
           binsData = await allBinsRes.json();
@@ -262,8 +266,8 @@ export default function TransferModal({
 
         if (transfer?._id) {
           logger.debug("📦 Fetching latest transfer data...");
-          const res = await fetch(`/api/operations/transfers/${transfer._id}`);
-          if (res.ok) {
+          const res = await transferPromise;
+          if (res?.ok) {
             latestTransfer = await res.json();
             logger.debug("✅ Transfer data loaded");
           }
