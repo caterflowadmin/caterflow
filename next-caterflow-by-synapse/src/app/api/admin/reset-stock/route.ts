@@ -1,3 +1,5 @@
+import { logger } from '@/lib/logger';
+import { clearStockCache } from '@/lib/cache';
 // src/app/api/admin/reset-stock/route.ts
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -60,7 +62,7 @@ export async function POST(request: Request) {
 					version: (existingRegistry.version || 0) + 1
 				})
 				.commit();
-			console.log('✅ Reset existing stock registry');
+			logger.debug('✅ Reset existing stock registry');
 		} else {
 			await writeClient.create({
 				_type: 'stockRegistry',
@@ -69,9 +71,10 @@ export async function POST(request: Request) {
 				lastUpdated: new Date().toISOString(),
 				version: 1
 			});
-			console.log('✅ Created new empty stock registry');
+			logger.debug('✅ Created new empty stock registry');
 		}
 
+		clearStockCache(); // registry changed: drop the parsed-registry cache
 		return NextResponse.json({
 			success: true,
 			snapshotsDeleted,

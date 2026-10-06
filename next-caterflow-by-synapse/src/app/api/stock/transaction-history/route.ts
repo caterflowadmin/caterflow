@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { calculateStockWithHistory } from '@/lib/stockCalculations';
 
@@ -14,7 +15,7 @@ export async function GET(request: NextRequest) {
 			);
 		}
 
-		console.log(`🔍 Fetching accurate stock history for ${stockItemId} in ${binId}`);
+		logger.debug(`🔍 Fetching accurate stock history for ${stockItemId} in ${binId}`);
 
 		// Use the new accurate calculation function
 		const result = await calculateStockWithHistory(stockItemId, binId);

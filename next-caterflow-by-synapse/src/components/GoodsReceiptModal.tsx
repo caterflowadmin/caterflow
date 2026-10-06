@@ -1,5 +1,6 @@
 "use client";
 
+import { logger } from '@/lib/logger';
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Modal,
@@ -357,7 +358,7 @@ export default function GoodsReceiptModal({
               (item: any) => item.receivingBin,
             )
           ) {
-            console.log(
+            logger.debug(
               "🔄 Old receipt detected: adding document-level bin to items",
             );
             fullReceiptData.receivedItems = (
@@ -573,7 +574,7 @@ export default function GoodsReceiptModal({
   };
 
   const saveReceipt = async (status: string = "draft"): Promise<any> => {
-    console.log(`💾 saveReceipt called with status: ${status}`);
+    logger.debug(`💾 saveReceipt called with status: ${status}`);
 
     // Check if saving as completed
     if (status === "completed") {
@@ -658,7 +659,7 @@ export default function GoodsReceiptModal({
                 updates: { unitPrice: item.unitPrice },
               }),
             });
-            console.log(
+            logger.debug(
               `Updated unit price for ${item.stockItem.name} to E ${item.unitPrice}`,
             );
           } catch (error) {
@@ -1022,7 +1023,7 @@ export default function GoodsReceiptModal({
         );
       }
 
-      console.log("✅ Receipt saved with bin assignments");
+      logger.debug("✅ Receipt saved with bin assignments");
 
       // 3. Update unit prices
       for (const item of formData.receivedItems || []) {
@@ -1035,7 +1036,7 @@ export default function GoodsReceiptModal({
                 updates: { unitPrice: item.unitPrice },
               }),
             });
-            console.log(
+            logger.debug(
               `Updated unit price for ${item.stockItem.name} to E ${item.unitPrice}`,
             );
           } catch (error) {
@@ -1180,11 +1181,11 @@ export default function GoodsReceiptModal({
   const getAttachmentUrl = (
     attachment: any,
   ): { url: string | undefined; type: "image" | "file" | "unknown" } => {
-    console.log("Attachment data:", attachment);
+    logger.debug("Attachment data:", attachment);
 
     // First check if there's a direct file URL
     if (attachment.url) {
-      console.log("Using direct URL:", attachment.url);
+      logger.debug("Using direct URL:", attachment.url);
       const fileExtension =
         attachment.fileName?.split(".").pop()?.toLowerCase() || "";
       const isImage = ["png", "jpg", "jpeg", "gif", "webp"].includes(
@@ -1198,18 +1199,18 @@ export default function GoodsReceiptModal({
       const asset = attachment.file.asset;
 
       try {
-        console.log("Asset found:", asset);
+        logger.debug("Asset found:", asset);
 
         // Check if it's an image asset
         if (asset._type === "sanity.imageAsset") {
           const url = urlFor(asset).url();
-          console.log("Generated image URL:", url);
+          logger.debug("Generated image URL:", url);
           return { url, type: "image" };
         }
         // Check if it's a file asset
         else if (asset._type === "sanity.fileAsset") {
           const fileUrl = asset.url;
-          console.log("File asset URL:", fileUrl);
+          logger.debug("File asset URL:", fileUrl);
 
           // Check if file is an image by extension
           const fileExtension =
@@ -1220,7 +1221,7 @@ export default function GoodsReceiptModal({
 
           return { url: fileUrl, type: isImage ? "image" : "file" };
         } else if (asset.url) {
-          console.log("Using asset URL:", asset.url);
+          logger.debug("Using asset URL:", asset.url);
           const fileExtension =
             attachment.fileName?.split(".").pop()?.toLowerCase() || "";
           const isImage = ["png", "jpg", "jpeg", "gif", "webp"].includes(
@@ -1231,7 +1232,7 @@ export default function GoodsReceiptModal({
       } catch (error) {
         console.error("Error processing asset:", error);
         if (asset.url) {
-          console.log("Fallback to asset URL:", asset.url);
+          logger.debug("Fallback to asset URL:", asset.url);
           const fileExtension =
             attachment.fileName?.split(".").pop()?.toLowerCase() || "";
           const isImage = ["png", "jpg", "jpeg", "gif", "webp"].includes(
@@ -1242,7 +1243,7 @@ export default function GoodsReceiptModal({
       }
     }
 
-    console.log("No URL found for attachment");
+    logger.debug("No URL found for attachment");
     return { url: undefined, type: "unknown" };
   };
 

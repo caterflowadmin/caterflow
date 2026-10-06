@@ -1,5 +1,6 @@
 // src/components/DispatchModal.tsx (REPLACE ENTIRE FILE)
 "use client";
+import { logger } from '@/lib/logger';
 
 import React, { useState, useEffect } from "react";
 import {
@@ -394,7 +395,7 @@ export default function DispatchModal({
           }
         } catch (error: any) {
           if (error.name === "AbortError") return;
-          console.log("Error setting default site:", error);
+          logger.debug("Error setting default site:", error);
         } finally {
           if (mounted) setLoading(false);
         }

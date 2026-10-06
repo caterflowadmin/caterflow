@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/stock/snapshots/bulk/route.ts
 import { NextResponse } from "next/server";
 import { client } from "@/lib/sanity";
@@ -21,7 +22,7 @@ export async function POST(request: Request) {
       );
     }
 
-    console.log(
+    logger.debug(
       `📊 API: Requested ${stockItemIds.length} items, ${binIds.length} bins`,
     );
 
@@ -43,7 +44,7 @@ export async function POST(request: Request) {
 
     // 🚨 CRITICAL FIX: Check if registry exists
     if (!registry) {
-      console.log("⚠️ No registry found - returning all zeros");
+      logger.debug("⚠️ No registry found - returning all zeros");
 
       // Return all zeros
       const results: { [key: string]: number } = {};
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
       });
     }
 
-    console.log(
+    logger.debug(
       `✅ Registry found: ${registry._id}, last updated: ${registry.lastUpdated}`,
     );
 
@@ -72,7 +73,7 @@ export async function POST(request: Request) {
 
     // Fill in from registry if data exists
     if (registry?.stockData?.items) {
-      console.log(`📋 Registry has ${registry.stockData.items.length} items`);
+      logger.debug(`📋 Registry has ${registry.stockData.items.length} items`);
 
       // Create lookup map for faster access
       const registryMap = new Map<string, number>();
@@ -93,11 +94,11 @@ export async function POST(request: Request) {
         foundInRegistry++;
       });
     } else {
-      console.log("⚠️ Registry has no stockData items");
+      logger.debug("⚠️ Registry has no stockData items");
     }
 
     const missingFromRegistry = totalCombinations - foundInRegistry;
-    console.log(
+    logger.debug(
       `✅ API: ${foundInRegistry} found in registry, ${missingFromRegistry} not in registry of ${totalCombinations} requested`,
     );
 

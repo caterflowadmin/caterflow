@@ -1,3 +1,4 @@
+import { withInvalidation } from '@/lib/lookupCache';
 // src/app/api/dispatch-types/[id]/route.ts (REPLACE ENTIRE FILE)
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -34,7 +35,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 // src/app/api/dispatch-types/[id]/route.ts (UPDATE the PUT function)
 
 // PUT update dispatch type
-export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function _PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
     try {
         const session = await getServerSession(authOptions);
 
@@ -99,7 +100,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
 }
 
 // DELETE dispatch type
-export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function _DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
     try {
         const session = await getServerSession(authOptions);
 
@@ -141,3 +142,6 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
         return NextResponse.json({ error: 'Failed to delete dispatch type' }, { status: 500 });
     }
 }
+
+export const PUT = withInvalidation(_PUT, ['dispatch-types']);
+export const DELETE = withInvalidation(_DELETE, ['dispatch-types']);

@@ -1,5 +1,6 @@
 "use client";
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from "react";
 import {
   Box,
@@ -111,8 +112,8 @@ export default function UsersPage() {
       ]);
 
       // Debug: Log what we're getting from the API
-      console.log("Users data from API:", usersData);
-      console.log("Sites data from API:", sitesData);
+      logger.debug("Users data from API:", usersData);
+      logger.debug("Sites data from API:", sitesData);
 
       // The API already returns expanded site objects, so no need to map
       setUsers(usersData);

@@ -1,5 +1,6 @@
 "use client";
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from "react";
 import {
   Box,
@@ -196,7 +197,7 @@ export default function ApprovalsPage() {
       const transfersData = await transfersResponse.json();
       const purchaseOrdersData = await purchaseOrdersResponse.json();
 
-      console.log("Transfers data from API:", {
+      logger.debug("Transfers data from API:", {
         count: transfersData.length,
         data: transfersData,
       });
@@ -231,7 +232,7 @@ export default function ApprovalsPage() {
       );
 
       // In fetchPendingApprovals function, add more debugging:
-      console.log("Purchase orders data from API:", {
+      logger.debug("Purchase orders data from API:", {
         raw: purchaseOrdersData,
         firstItem: purchaseOrdersData[0],
         firstItemOrderedBy: purchaseOrdersData[0]?.orderedBy,
@@ -242,7 +243,7 @@ export default function ApprovalsPage() {
       const purchaseOrderApprovals: PurchaseOrderApproval[] = purchaseOrdersData
         .filter((po: any) => po._type === "PurchaseOrder")
         .map((po: any) => {
-          console.log("Mapping PO:", {
+          logger.debug("Mapping PO:", {
             poNumber: po.poNumber,
             orderedBy: po.orderedBy,
             orderedByName: po.orderedBy?.name,
@@ -273,7 +274,7 @@ export default function ApprovalsPage() {
       const allApprovals = [...transferApprovals, ...purchaseOrderApprovals];
       setPendingApprovals(allApprovals);
 
-      console.log("Final approvals:", {
+      logger.debug("Final approvals:", {
         total: allApprovals.length,
         transfers: transferApprovals.length,
         purchaseOrders: purchaseOrderApprovals.length,

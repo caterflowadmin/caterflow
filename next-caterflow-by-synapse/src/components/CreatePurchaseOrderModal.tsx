@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // Enhanced CreatePurchaseOrderModal.tsx with Multi-Select
 import React, { useState, useEffect } from 'react';
 import {
@@ -297,7 +298,7 @@ export default function CreatePurchaseOrderModal({
     const handleSave = async () => {
         if (isCreatingOrder) return; // Prevent multiple clicks
 
-        console.log('Saving order items:', orderItems);
+        logger.debug('Saving order items:', orderItems);
 
         // Validate there are items to order
         if (orderItems.length === 0) {

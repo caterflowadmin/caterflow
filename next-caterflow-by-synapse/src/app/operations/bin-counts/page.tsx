@@ -1,5 +1,6 @@
 "use client";
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Box,
@@ -135,7 +136,7 @@ export default function BinCountsPage() {
       const response = await fetch("/api/bin-counts");
       if (response.ok) {
         const data = await response.json();
-        console.log("API response data:", data);
+        logger.debug("API response data:", data);
         setBinCounts(data);
       } else {
         throw new Error("Failed to fetch bin counts");

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { bulkUpdateStockRegistry } from '@/lib/stockCalculations';
 
@@ -13,12 +14,12 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
-		console.log(`📝 API: Received ${updates.length} registry updates`);
+		logger.debug(`📝 API: Received ${updates.length} registry updates`);
 
 		const results = await bulkUpdateStockRegistry(updates, {
 			onProgress: ({ processed, total }) => {
 				if (processed % 100 === 0 || processed === total) {
-					console.log(`📈 Bulk update progress: ${processed}/${total}`);
+					logger.debug(`📈 Bulk update progress: ${processed}/${total}`);
 				}
 			}
 		});

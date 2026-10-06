@@ -74,7 +74,7 @@ export default function AttachmentGallery({
     const fetchAttachments = useCallback(async () => {
         setLoading(true);
         try {
-            const response = await fetch(`/api/sanity/attachments?relatedToId=${relatedTo}`);
+            const response = await fetch(`/api/attachments?relatedTo=${relatedTo}`);
             if (!response.ok) {
                 throw new Error('Failed to fetch attachments');
             }

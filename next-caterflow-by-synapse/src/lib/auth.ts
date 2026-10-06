@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import type { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { groq } from 'next-sanity';
@@ -29,7 +30,7 @@ export const authOptions: NextAuthOptions = {
             },
             async authorize(credentials) {
                 if (!credentials?.email || !credentials.password) {
-                    console.log('Missing credentials');
+                    logger.debug('Missing credentials');
                     return null;
                 }
 
@@ -37,19 +38,19 @@ export const authOptions: NextAuthOptions = {
                     const user = await client.fetch(userQuery, { email: credentials.email });
 
                     if (!user) {
-                        console.log('User not found for email:', credentials.email);
+                        logger.debug('User not found for email:', credentials.email);
                         return null;
                     }
 
                     // Check if user is active
                     if (user.isActive === false) {
-                        console.log('User account is inactive:', user.email);
+                        logger.debug('User account is inactive:', user.email);
                         throw new Error('Account is inactive. Please contact administrator.');
                     }
 
                     // Handle new users without password
                     if (!user.password) {
-                        console.log('New user - setting password for:', user.email);
+                        logger.debug('New user - setting password for:', user.email);
 
                         // Hash and set the password
                         const hashedPassword = await hash(credentials.password, 10);
@@ -63,7 +64,7 @@ export const authOptions: NextAuthOptions = {
                             })
                             .commit();
 
-                        console.log('Password set successfully for new user:', user.email);
+                        logger.debug('Password set successfully for new user:', user.email);
 
                         return {
                             id: user._id,
@@ -78,11 +79,11 @@ export const authOptions: NextAuthOptions = {
                     const isValidPassword = await compare(credentials.password, user.password);
 
                     if (!isValidPassword) {
-                        console.log('Invalid password for user:', user.email);
+                        logger.debug('Invalid password for user:', user.email);
                         return null;
                     }
 
-                    console.log('Login successful for user:', user.email);
+                    logger.debug('Login successful for user:', user.email);
 
                     return {
                         id: user._id,

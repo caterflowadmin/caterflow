@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/approvals/route.ts - UPDATED
 import { NextResponse } from 'next/server';
 import { client } from '@/lib/sanity';
@@ -67,12 +68,12 @@ export async function GET(request: Request) {
         const userSite = searchParams.get('userSite');
         const userRole = searchParams.get('userRole');
 
-        console.log('Approvals API called with:', { userRole, userSite });
+        logger.debug('Approvals API called with:', { userRole, userSite });
 
         let siteFilter = '';
 
         if (userRole === 'siteManager' && userSite) {
-            console.log('Building site filter for site manager with site:', userSite);
+            logger.debug('Building site filter for site manager with site:', userSite);
             siteFilter = `&& site._ref == "${userSite}"`;
         } else if (userRole === 'admin' || userRole === 'auditor' || userRole === 'procurer') {
             siteFilter = '';
@@ -80,7 +81,7 @@ export async function GET(request: Request) {
             return NextResponse.json([]);
         }
 
-        console.log('Site filter being used:', siteFilter);
+        logger.debug('Site filter being used:', siteFilter);
 
         // Fetch both types of approvals
         const [purchaseOrders, internalTransfers] = await Promise.all([
@@ -89,12 +90,12 @@ export async function GET(request: Request) {
         ]);
 
         // Add debug logging
-        console.log('Purchase orders raw data:', JSON.stringify(purchaseOrders, null, 2));
-        console.log('Internal transfers raw data:', JSON.stringify(internalTransfers, null, 2));
+        logger.debug('Purchase orders raw data:', JSON.stringify(purchaseOrders, null, 2));
+        logger.debug('Internal transfers raw data:', JSON.stringify(internalTransfers, null, 2));
 
         let approvals = [...purchaseOrders, ...internalTransfers];
 
-        console.log('Raw approvals fetched:', {
+        logger.debug('Raw approvals fetched:', {
             purchaseOrders: purchaseOrders.length,
             internalTransfers: internalTransfers.length,
             total: approvals.length
@@ -105,7 +106,7 @@ export async function GET(request: Request) {
             if (approval._type === 'PurchaseOrder') {
                 const supplierNames = [...new Set((approval.orderedItems || []).map((i: any) => i.supplier?.name).filter(Boolean))];
 
-                console.log('PO approval:', {
+                logger.debug('PO approval:', {
                     poNumber: approval.poNumber,
                     orderedBy: approval.orderedBy,
                     orderedByName: approval.orderedBy?.name,
@@ -123,7 +124,7 @@ export async function GET(request: Request) {
                     requestedBy: approval.orderedBy?.name || 'Unknown'
                 };
             } else if (approval._type === 'InternalTransfer') {
-                console.log('Transfer approval:', {
+                logger.debug('Transfer approval:', {
                     transferNumber: approval.transferNumber,
                     transferredBy: approval.transferredBy,
                     transferredByName: approval.transferredBy?.name,
@@ -152,13 +153,13 @@ export async function GET(request: Request) {
                 return false;
             });
 
-            console.log('After site manager filtering:', approvals.length, 'approvals');
+            logger.debug('After site manager filtering:', approvals.length, 'approvals');
         }
 
         // Sort by creation date, newest first
         approvals.sort((a: any, b: any) => new Date(b._createdAt).getTime() - new Date(a._createdAt).getTime());
 
-        console.log('Final approvals to return (first 2):', approvals.slice(0, 2));
+        logger.debug('Final approvals to return (first 2):', approvals.slice(0, 2));
 
         return NextResponse.json(approvals);
     } catch (error: any) {

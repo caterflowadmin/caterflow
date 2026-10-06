@@ -1,3 +1,4 @@
+import { cachedLookup } from '@/lib/lookupCache';
 import { NextResponse } from 'next/server';
 import { client } from '@/lib/sanity';
 import { groq } from 'next-sanity';
@@ -26,7 +27,7 @@ export async function GET() {
       `;
 
     try {
-      const locations = await client.fetch(query);
+      const locations = await cachedLookup('locations', [siteFilter], () => client.fetch(query), 60);
       return NextResponse.json(locations);
     } catch (error) {
       console.error('Failed to fetch locations and bins:', error);

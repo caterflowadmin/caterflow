@@ -1,9 +1,10 @@
+import { withInvalidation } from '@/lib/lookupCache';
 // api/purchase-orders/update-price/route.tsx
 import { NextResponse } from 'next/server';
 import { client } from '@/lib/sanity';
 import { groq } from 'next-sanity';
 
-export async function POST(request: Request) {
+async function _POST(request: Request) {
     try {
         // Correctly destructure both newPrice and newQuantity
         const { poId, itemKey, newPrice, newQuantity } = await request.json();
@@ -57,3 +58,5 @@ export async function POST(request: Request) {
         );
     }
 }
+
+export const POST = withInvalidation(_POST, ['stock-items']);

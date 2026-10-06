@@ -1,8 +1,9 @@
+import { withInvalidation } from '@/lib/lookupCache';
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
 import { groq } from 'next-sanity';
 
-export async function POST(request: Request) {
+async function _POST(request: Request) {
     try {
         const { itemId, supplierId } = await request.json();
 
@@ -68,3 +69,5 @@ export async function POST(request: Request) {
         );
     }
 }
+
+export const POST = withInvalidation(_POST, ['stock-items']);

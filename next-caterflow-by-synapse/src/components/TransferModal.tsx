@@ -1,5 +1,6 @@
 // components/TransferModal.tsx
 "use client";
+import { logger } from '@/lib/logger';
 
 import React, { useState, useEffect, useCallback } from "react";
 import {
@@ -186,11 +187,11 @@ export default function TransferModal({
                 .filter(Boolean);
 
         if (idsToFetch.length > 0) {
-          console.log(
+          logger.debug(
             `🔄 Refreshing stock levels for ${idsToFetch.length} items in bin ${binId}`,
           );
           const stockData = await getBinStock(idsToFetch, binId);
-          console.log("✅ Stock levels refreshed:", stockData);
+          logger.debug("✅ Stock levels refreshed:", stockData);
 
           // Convert the stock data to match the expected type
           const simplifiedStockData: { [key: string]: number } = {};
@@ -209,7 +210,7 @@ export default function TransferModal({
 
           setStockLevels(simplifiedStockData);
         } else {
-          console.log("ℹ️ No items to refresh stock for");
+          logger.debug("ℹ️ No items to refresh stock for");
           setStockLevels({});
         }
       } catch (error) {
@@ -237,19 +238,19 @@ export default function TransferModal({
       try {
         // Fetch bins – request all-sites visibility for transfers.
         // The server enforces role-based access; falls back to own-site on 403.
-        console.log("🗄️ Fetching bins (all sites for transfer)...");
+        logger.debug("🗄️ Fetching bins (all sites for transfer)...");
         let binsData: any[] = [];
         const allBinsRes = await fetch("/api/bins?allowAll=true");
         if (allBinsRes.ok) {
           binsData = await allBinsRes.json();
-          console.log(`✅ All-sites bins fetched: ${binsData.length}`);
+          logger.debug(`✅ All-sites bins fetched: ${binsData.length}`);
         } else if (allBinsRes.status === 403) {
           // Role not permitted to see all bins; fall back to own-site only
           console.warn("⚠️ allowAll denied, falling back to own-site bins");
           const fallbackRes = await fetch("/api/bins");
           if (fallbackRes.ok) {
             binsData = await fallbackRes.json();
-            console.log(`✅ Own-site bins fetched: ${binsData.length}`);
+            logger.debug(`✅ Own-site bins fetched: ${binsData.length}`);
           }
         }
         setAllBins(binsData);
@@ -259,11 +260,11 @@ export default function TransferModal({
         let latestTransfer = transfer;
 
         if (transfer?._id) {
-          console.log("📦 Fetching latest transfer data...");
+          logger.debug("📦 Fetching latest transfer data...");
           const res = await fetch(`/api/operations/transfers/${transfer._id}`);
           if (res.ok) {
             latestTransfer = await res.json();
-            console.log("✅ Transfer data loaded");
+            logger.debug("✅ Transfer data loaded");
           }
         }
 
@@ -277,7 +278,7 @@ export default function TransferModal({
         setTransferredItems(latestTransfer?.transferredItems || []);
         setNotes(latestTransfer?.notes || "");
 
-        console.log("✅ Form initialized");
+        logger.debug("✅ Form initialized");
       } catch (error) {
         console.error("❌ Error fetching transfer data:", error);
         toast({
@@ -298,7 +299,7 @@ export default function TransferModal({
   // Enhanced stock refresh when fromBin changes
   useEffect(() => {
     if (fromBin?._id && !isCompleted) {
-      console.log(
+      logger.debug(
         `📍 From bin changed to: ${fromBin.name}, refreshing stock...`,
       );
       const itemIds = transferredItems
@@ -313,7 +314,7 @@ export default function TransferModal({
   // Enhanced stock refresh handler with better feedback
   const handleRefreshStock = async () => {
     if (fromBin?._id && !isCompleted) {
-      console.log("🔄 Manual stock refresh triggered");
+      logger.debug("🔄 Manual stock refresh triggered");
       await refreshStockLevels(fromBin._id);
       toast({
         title: "Stock Levels Refreshed",

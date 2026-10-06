@@ -1,3 +1,4 @@
+import { withInvalidation } from '@/lib/lookupCache';
 // app/api/stock-items/[id]/route.ts
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -59,7 +60,7 @@ export async function GET(
 }
 
 // --- PATCH single stock item ---
-export async function PATCH(
+async function _PATCH(
 	request: Request,
 	{ params }: { params: Promise<{ id: string }> }
 ) {
@@ -116,7 +117,7 @@ export async function PATCH(
 }
 
 // --- DELETE single stock item ---
-export async function DELETE(
+async function _DELETE(
 	request: Request,
 	{ params }: { params: Promise<{ id: string }> }
 ) {
@@ -141,3 +142,6 @@ export async function DELETE(
 		);
 	}
 }
+
+export const PATCH = withInvalidation(_PATCH, ['stock-items']);
+export const DELETE = withInvalidation(_DELETE, ['stock-items']);

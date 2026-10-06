@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/bin-counts/[id]/route.ts
 import { NextResponse } from "next/server";
 import { client, writeClient } from "@/lib/sanity";
@@ -94,7 +95,7 @@ export async function PUT(
       updateData.status === "completed" || (!updateData.status && wasCompleted);
 
     /*    if (wasCompleted && (updateData.countedItems || updateData.bin)) {
-          console.log('↩️ Reverting previous stock changes for count edit');
+          logger.debug('↩️ Reverting previous stock changes for count edit');
           await revertPreviousStockChanges(id);
         }*/
 

@@ -220,49 +220,28 @@ export default function Home() {
     const fetchSites = async () => {
       setIsSitesLoading(true);
       try {
-        let siteQuery = '';
-        let siteParams = {};
-
-        // Determine which sites the user can access based on role
-        if (userRole === 'siteManager') {
-          // Site managers can only see their associated site
-          if (associatedSite?._id) {
-            siteQuery = `*[_type == "Site" && _id == $siteId] | order(name asc) { _id, name }`;
-            siteParams = { siteId: associatedSite._id };
-          } else {
-            // No associated site - can't see any sites
-            setSites([]);
-            setSelectedSiteId(null);
-            setIsSitesLoading(false);
-            return;
-          }
-        } else if (userRole === 'admin' || userRole === 'auditor') {
-          // Admins and auditors can see all sites
-          siteQuery = `*[_type == "Site"] | order(name asc) { _id, name }`;
-        } else {
-          // Other roles with no site access
+        // Only admins, auditors and site managers see a site list on the dashboard.
+        if (userRole !== 'siteManager' && userRole !== 'admin' && userRole !== 'auditor') {
+          setSites([]);
+          setSelectedSiteId(null);
+          setIsSitesLoading(false);
+          return;
+        }
+        if (userRole === 'siteManager' && !associatedSite?._id) {
           setSites([]);
           setSelectedSiteId(null);
           setIsSitesLoading(false);
           return;
         }
 
-        const response = await fetch('/api/sanity', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            query: siteQuery,
-            params: siteParams
-          }),
-        });
+        // /api/sites already applies per-role site filtering server-side.
+        const response = await fetch('/api/sites');
 
         if (!response.ok) {
           throw new Error('Failed to fetch sites');
         }
 
-        const fetchedSites: Site[] = await response.json();
+        const fetchedSites: Site[] = (await response.json()).map((s: any) => ({ _id: s._id, name: s.name }));
         setSites(fetchedSites);
 
         // Auto-select first site if available

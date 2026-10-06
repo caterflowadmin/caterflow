@@ -1,3 +1,5 @@
+import { cachedLookup } from '@/lib/lookupCache';
+import { withInvalidation } from '@/lib/lookupCache';
 import { NextRequest, NextResponse } from 'next/server';
 import { writeClient } from '@/lib/sanity';
 import { groq } from 'next-sanity';
@@ -54,7 +56,12 @@ export async function GET() {
             return NextResponse.json([]);
         }
 
-        const sites = await writeClient.fetch(query, params);
+        const sites = await cachedLookup(
+            'sites',
+            [userSiteInfo.canAccessMultipleSites ? 'all' : userSiteInfo.userSiteId],
+            () => writeClient.fetch(query, params),
+            60,
+        );
         return NextResponse.json(sites);
     } catch (error) {
         console.error('Error fetching sites:', error);
@@ -66,7 +73,7 @@ export async function GET() {
 }
 
 // CREATE a new site
-export async function POST(req: NextRequest) {
+async function _POST(req: NextRequest) {
     try {
         const session = await getServerSession(authOptions);
 
@@ -142,7 +149,7 @@ export async function POST(req: NextRequest) {
 }
 
 // UPDATE a site
-export async function PATCH(req: NextRequest) {
+async function _PATCH(req: NextRequest) {
     try {
         const session = await getServerSession(authOptions);
 
@@ -248,7 +255,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 // DELETE a site
-export async function DELETE(req: NextRequest) {
+async function _DELETE(req: NextRequest) {
     try {
         const session = await getServerSession(authOptions);
 
@@ -322,3 +329,7 @@ export async function DELETE(req: NextRequest) {
         );
     }
 }
+
+export const POST = withInvalidation(_POST, ['sites', 'bins', 'locations', 'dispatch-types']);
+export const PATCH = withInvalidation(_PATCH, ['sites', 'bins', 'locations', 'dispatch-types']);
+export const DELETE = withInvalidation(_DELETE, ['sites', 'bins', 'locations', 'dispatch-types']);

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // Enhanced StockItemSelectorModal.tsx with better scrolling UX
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
@@ -178,7 +179,7 @@ export default function StockItemSelectorModal({
 
                 setStockItems(itemsWithStock);
 
-                console.log(`📊 Updated ${items.length} items with stock data`);
+                logger.debug(`📊 Updated ${items.length} items with stock data`);
             }
         } catch (error) {
             console.error('Background stock fetch failed:', error);

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/upload/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { writeClient } from '@/lib/sanity';
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
         const session = await getServerSession(authOptions);
 
         if (!session || !session.user) {
-            console.log('User not authenticated');
+            logger.debug('User not authenticated');
             return NextResponse.json(
                 { error: 'User not authenticated' },
                 { status: 401 }
@@ -41,7 +42,7 @@ export async function POST(request: NextRequest) {
         });
 
         if (!user) {
-            console.log('User not found in database for email:', session.user.email);
+            logger.debug('User not found in database for email:', session.user.email);
             return NextResponse.json(
                 { error: 'User not found in database' },
                 { status: 404 }
@@ -61,19 +62,19 @@ export async function POST(request: NextRequest) {
         const supplier = formData.get('supplier');
 
         // **Log the received form data**
-        console.log('--- Server-side Received Data ---');
-        console.log('Received File:', file ? file.name : 'No file received');
-        console.log('Received Related To ID:', relatedToId);
-        console.log('Received File Type:', fileType);
-        console.log('Received Description:', description);
-        console.log('Invoice Number:', invoiceNumber);
-        console.log('Invoice Date:', invoiceDate);
-        console.log('Invoice Amount:', invoiceAmount);
-        console.log('Supplier:', supplier);
-        console.log('---------------------------------');
+        logger.debug('--- Server-side Received Data ---');
+        logger.debug('Received File:', file ? file.name : 'No file received');
+        logger.debug('Received Related To ID:', relatedToId);
+        logger.debug('Received File Type:', fileType);
+        logger.debug('Received Description:', description);
+        logger.debug('Invoice Number:', invoiceNumber);
+        logger.debug('Invoice Date:', invoiceDate);
+        logger.debug('Invoice Amount:', invoiceAmount);
+        logger.debug('Supplier:', supplier);
+        logger.debug('---------------------------------');
 
         if (!file || !relatedToId) {
-            console.log('Missing file or related document ID');
+            logger.debug('Missing file or related document ID');
             return NextResponse.json(
                 { error: 'File and related document ID are required' },
                 { status: 400 }
@@ -81,7 +82,7 @@ export async function POST(request: NextRequest) {
         }
 
         if (file.size > MAX_FILE_SIZE) {
-            console.log(`File size too large: ${file.size}`);
+            logger.debug(`File size too large: ${file.size}`);
             return NextResponse.json(
                 { error: `File size exceeds the limit of ${MAX_FILE_SIZE / 1024 / 1024}MB` },
                 { status: 400 }
@@ -89,7 +90,7 @@ export async function POST(request: NextRequest) {
         }
 
         if (!ALLOWED_FILE_TYPES.includes(file.type)) {
-            console.log(`Unsupported file type: ${file.type}`);
+            logger.debug(`Unsupported file type: ${file.type}`);
             return NextResponse.json(
                 { error: 'Unsupported file type' },
                 { status: 400 }
@@ -113,12 +114,12 @@ export async function POST(request: NextRequest) {
         }
 
         // Upload file to Sanity
-        console.log('Uploading file to Sanity...');
+        logger.debug('Uploading file to Sanity...');
         const fileAsset = await writeClient.assets.upload('file', file, {
             filename: file.name,
             contentType: file.type,
         });
-        console.log('Sanity asset upload successful:', fileAsset._id);
+        logger.debug('Sanity asset upload successful:', fileAsset._id);
 
         // Build description with invoice metadata
         let finalDescription = description as string || '';
@@ -139,7 +140,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Create a new FileAttachment document
-        console.log('Creating new FileAttachment document...');
+        logger.debug('Creating new FileAttachment document...');
         const newAttachment = await writeClient.create({
             _type: 'FileAttachment',
             fileName: file.name,
@@ -163,10 +164,10 @@ export async function POST(request: NextRequest) {
             },
             isArchived: false,
         });
-        console.log('FileAttachment document created:', newAttachment._id);
+        logger.debug('FileAttachment document created:', newAttachment._id);
 
         // Link the attachment to the related document
-        console.log(`Patching document ${relatedToId} to add attachment reference...`);
+        logger.debug(`Patching document ${relatedToId} to add attachment reference...`);
         await writeClient
             .patch(relatedToId.toString())
             .setIfMissing({ attachments: [] })
@@ -178,7 +179,7 @@ export async function POST(request: NextRequest) {
                 },
             ])
             .commit();
-        console.log('Patch operation successful.');
+        logger.debug('Patch operation successful.');
 
         return NextResponse.json({
             success: true,

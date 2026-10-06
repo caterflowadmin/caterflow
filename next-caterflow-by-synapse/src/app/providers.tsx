@@ -6,6 +6,7 @@ import themes from './theme/theme';
 import { LoadingProvider } from '@/context/LoadingContext';
 import { SidebarProvider } from '@/context/SidebarContext';
 import { SessionProvider } from 'next-auth/react'; // Import the new provider
+import type { Session } from 'next-auth';
 
 // next-themes' ThemeProvider is already hydration-safe by design (it sets
 // the class via a blocking inline script before first paint, not a
@@ -19,12 +20,13 @@ import { SessionProvider } from 'next-auth/react'; // Import the new provider
 
 interface ProvidersProps {
   children?: React.ReactNode;
+  session?: Session | null;
 }
 
-export function Providers({ children }: ProvidersProps) {
+export function Providers({ children, session }: ProvidersProps) {
   return (
     // SessionProvider must wrap the entire application
-    <SessionProvider>
+    <SessionProvider session={session} refetchOnWindowFocus={false}>
       <ChakraProvider theme={themes}>
         <ThemeProvider
           attribute="class"

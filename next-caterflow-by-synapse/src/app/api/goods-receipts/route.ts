@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/goods-receipts/route.ts
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -87,7 +88,7 @@ export async function GET() {
         const userSiteInfo = await getUserSiteInfo();
         const siteFilter = buildGoodsReceiptSiteFilter(userSiteInfo);
 
-        console.log('🔍 Goods Receipt - User Site Info:', {
+        logger.debug('🔍 Goods Receipt - User Site Info:', {
             userId: userSiteInfo.userId,
             userRole: userSiteInfo.userRole,
             userSiteId: userSiteInfo.userSiteId,
@@ -205,7 +206,7 @@ export async function GET() {
 
         const goodsReceipts = await client.fetch(query);
 
-        console.log(`📊 Found ${goodsReceipts?.length || 0} goods receipts after site filtering`);
+        logger.debug(`📊 Found ${goodsReceipts?.length || 0} goods receipts after site filtering`);
 
         // Filter out invalid receipts (missing purchase order)
         const validReceipts = goodsReceipts.filter((receipt: any) =>
@@ -216,7 +217,7 @@ export async function GET() {
         const transformedReceipts = validReceipts.map((receipt: any) => {
             // For old receipts with document-level receivingBin but no item-level bins
             if (receipt.receivingBin && !receipt.receivedItems?.every((item: any) => item.receivingBin)) {
-                console.log(`🔄 Transforming old receipt ${receipt.receiptNumber} to item-level bin structure`);
+                logger.debug(`🔄 Transforming old receipt ${receipt.receiptNumber} to item-level bin structure`);
 
                 return {
                     ...receipt,
@@ -286,7 +287,7 @@ export async function POST(request: Request) {
         const payload = await request.json();
         const { _id, ...createData } = payload;
 
-        console.log('goods-receipt/route.ts - 📥 Receiving goods receipt creation with payload:', {
+        logger.debug('goods-receipt/route.ts - 📥 Receiving goods receipt creation with payload:', {
             status: payload.status,
             receiptNumber: payload.receiptNumber,
             hasStatus: 'status' in payload,
@@ -324,7 +325,7 @@ export async function POST(request: Request) {
             return processedItem;
         });
 
-        console.log('📦 Processed items with bins:', {
+        logger.debug('📦 Processed items with bins:', {
             totalItems: processedReceivedItems.length,
             itemsWithBins: processedReceivedItems.filter((item: any) => item.receivingBin).length,
             itemsWithoutBins: processedReceivedItems.filter((item: any) => !item.receivingBin).length
@@ -344,7 +345,7 @@ export async function POST(request: Request) {
             evidenceStatus: 'pending',
         };
 
-        console.log('📄 Final document to create:', {
+        logger.debug('📄 Final document to create:', {
             receiptNumber: newDoc.receiptNumber,
             itemCount: newDoc.receivedItems?.length || 0,
             itemsWithBins: processedReceivedItems.filter((item: any) => item.receivingBin).length,

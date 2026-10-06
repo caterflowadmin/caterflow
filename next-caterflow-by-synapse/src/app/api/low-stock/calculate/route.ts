@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { calculateBulkStock, getStockAsOfDate } from '@/lib/stockCalculations';
 import { client } from '@/lib/sanity';
@@ -9,7 +10,7 @@ export async function GET(request: NextRequest) {
 		const siteId = searchParams.get('siteId') || 'all';
 		const dateParam = searchParams.get('date');
 
-		console.log('🔍 Low-stock calculate API called with:', { siteId, dateParam });
+		logger.debug('🔍 Low-stock calculate API called with:', { siteId, dateParam });
 
 		// Get all stock items directly from Sanity
 		const stockItemsQuery = groq`*[_type == "StockItem"] {
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest) {
 		const stockItems = await client.fetch(stockItemsQuery);
 		const stockItemIds = stockItems.map((item: any) => item._id);
 
-		console.log(`📦 Found ${stockItems.length} stock items`);
+		logger.debug(`📦 Found ${stockItems.length} stock items`);
 
 		// Get bins based on site
 		let bins;
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
 		}
 
 		const binIds = bins.map((bin: any) => bin._id);
-		console.log(`🗄️ Found ${bins.length} bins`);
+		logger.debug(`🗄️ Found ${bins.length} bins`);
 
 		let stockResults;
 		let totalInventoryValue = 0;
@@ -56,28 +57,28 @@ export async function GET(request: NextRequest) {
 		if (dateParam) {
 			// Historical date calculation
 			const targetDate = new Date(dateParam);
-			console.log(`📅 Calculating historical stock as of: ${targetDate.toDateString()}`);
-			console.log(`📊 Will calculate for ${stockItemIds.length} items in ${binIds.length} bins`);
+			logger.debug(`📅 Calculating historical stock as of: ${targetDate.toDateString()}`);
+			logger.debug(`📊 Will calculate for ${stockItemIds.length} items in ${binIds.length} bins`);
 
 			stockResults = await getStockAsOfDate(stockItemIds, binIds, targetDate);
 
 			// If historical calculation returns empty results, try current calculation as fallback
 			const nonZeroResults = Object.values(stockResults).filter((q: any) => q > 0).length;
-			console.log(`📈 Historical calculation found ${nonZeroResults} non-zero results`);
+			logger.debug(`📈 Historical calculation found ${nonZeroResults} non-zero results`);
 
 			if (nonZeroResults === 0) {
-				console.log('⚠️ Historical calculation returned 0 results, trying current stock...');
+				logger.debug('⚠️ Historical calculation returned 0 results, trying current stock...');
 				stockResults = await calculateBulkStock(stockItemIds, binIds);
-				console.log(`📊 Current calculation found ${Object.values(stockResults).filter((q: any) => q > 0).length} non-zero results`);
+				logger.debug(`📊 Current calculation found ${Object.values(stockResults).filter((q: any) => q > 0).length} non-zero results`);
 			}
 		} else {
 			// Current stock calculation (same as low-stock page)
-			console.log('📊 Calculating current stock');
+			logger.debug('📊 Calculating current stock');
 			stockResults = await calculateBulkStock(stockItemIds, binIds);
 		}
 
 		// Calculate total value
-		console.log(`📈 Processing ${Object.keys(stockResults).length} stock results`);
+		logger.debug(`📈 Processing ${Object.keys(stockResults).length} stock results`);
 		const itemsWithStock: any[] = [];
 
 		for (const [key, quantity] of Object.entries(stockResults)) {
@@ -97,14 +98,14 @@ export async function GET(request: NextRequest) {
 			}
 		}
 
-		console.log(`💰 Total inventory value: ${totalInventoryValue}`);
-		console.log(`📦 Items with stock: ${itemsWithStock.length}`);
+		logger.debug(`💰 Total inventory value: ${totalInventoryValue}`);
+		logger.debug(`📦 Items with stock: ${itemsWithStock.length}`);
 
 		// Show sample of items with stock
 		if (itemsWithStock.length > 0) {
-			console.log('📋 Sample items with stock:');
+			logger.debug('📋 Sample items with stock:');
 			itemsWithStock.slice(0, 5).forEach(item => {
-				console.log(`  • ${item.name}: ${item.quantity} × $${item.unitPrice} = $${item.value}`);
+				logger.debug(`  • ${item.name}: ${item.quantity} × $${item.unitPrice} = $${item.value}`);
 			});
 		}
 

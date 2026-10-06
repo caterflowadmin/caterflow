@@ -2,9 +2,10 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { Providers } from "./providers";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { Sidebar } from "@/components/Sidebar";
 import { MobileTopbar } from "@/components/MobileTopbar";
-import { SidebarProvider } from "@/context/SidebarContext";
 import { Box } from "@chakra-ui/react";
 import { Footer } from "@/components/Footer";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
@@ -23,11 +24,16 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Resolve the session on the server (just a JWT decode) and hand it to the
+  // client SessionProvider so the sidebar/nav render with the user's role on
+  // first paint instead of waiting on a /api/auth/session round trip.
+  const session = await getServerSession(authOptions);
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -42,8 +48,7 @@ export default function RootLayout({
         />
       </head>
       <body className={inter.className}>
-        <Providers>
-          <SidebarProvider>
+        <Providers session={session}>
             <MobileTopbar />
             <Sidebar />
             <Box
@@ -61,7 +66,6 @@ export default function RootLayout({
             </Box>
             <ServiceWorkerRegister />
             <InstallButton /> {/* Add the InstallButton here */}
-          </SidebarProvider>
         </Providers>
       </body>
     </html>

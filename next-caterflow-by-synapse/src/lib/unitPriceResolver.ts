@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Shared unit price resolution helpers for consistent pricing across inventory flows.
  * Centralized to avoid duplicating price lookup logic across modals.
@@ -109,7 +110,7 @@ export async function getRecentUnitPricesForItemsInBin(
       }
     });
 
-    console.log("📊 Unit prices fetched from receipts:", priceMap);
+    logger.debug("📊 Unit prices fetched from receipts:", priceMap);
     return priceMap;
   } catch (error) {
     console.error(

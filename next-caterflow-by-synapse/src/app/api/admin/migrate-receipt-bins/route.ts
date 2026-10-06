@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/admin/migrate-receipt-bins/route.ts
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -5,7 +6,7 @@ import { groq } from 'next-sanity';
 
 export async function POST() {
 	try {
-		console.log('🔄 Starting receipt bin migration...');
+		logger.debug('🔄 Starting receipt bin migration...');
 
 		// Find receipts with document-level bins but no item-level bins
 		const oldReceipts = await client.fetch(
@@ -27,14 +28,14 @@ export async function POST() {
       }`
 		);
 
-		console.log(`Found ${oldReceipts.length} receipts with document-level bins only`);
+		logger.debug(`Found ${oldReceipts.length} receipts with document-level bins only`);
 
 		const results = [];
 		let migrated = 0;
 		let errors = 0;
 
 		for (const receipt of oldReceipts) {
-			console.log(`Migrating ${receipt.receiptNumber}...`);
+			logger.debug(`Migrating ${receipt.receiptNumber}...`);
 
 			try {
 				// Update each item to have the document-level bin
@@ -71,7 +72,7 @@ export async function POST() {
 					itemsMigrated: receipt.receivedItems.length
 				});
 
-				console.log(`✅ Migrated ${receipt.receiptNumber} (${receipt.receivedItems.length} items)`);
+				logger.debug(`✅ Migrated ${receipt.receiptNumber} (${receipt.receivedItems.length} items)`);
 			} catch (error) {
 				errors++;
 				results.push({

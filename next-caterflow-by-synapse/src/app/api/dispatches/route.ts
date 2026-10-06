@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/dispatches/route.ts
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -262,19 +263,19 @@ export async function GET() {
 // --- POST create dispatch ---
 // --- POST create dispatch ---
 export async function POST(request: Request) {
-    console.log('🚀 POST /api/dispatches - Starting dispatch creation');
+    logger.debug('🚀 POST /api/dispatches - Starting dispatch creation');
 
     try {
         const session = await getServerSession(authOptions);
-        console.log('🔐 Session check:', session ? `User ${session.user.email} authenticated` : 'No session');
+        logger.debug('🔐 Session check:', session ? `User ${session.user.email} authenticated` : 'No session');
 
         if (!session || !session.user) {
-            console.log('❌ User not authenticated');
+            logger.debug('❌ User not authenticated');
             return NextResponse.json({ error: 'User not authenticated' }, { status: 401 });
         }
 
         const body = await request.json();
-        console.log('📦 Request body received:', {
+        logger.debug('📦 Request body received:', {
             hasDispatchType: !!body.dispatchType,
             hasSourceSite: !!body.sourceSite,
             hasDispatchDate: !!body.dispatchDate,
@@ -285,7 +286,7 @@ export async function POST(request: Request) {
         const { _id, ...createData } = body;
 
         if (!createData.dispatchType || !createData.sourceSite || !createData.dispatchDate) {
-            console.log('❌ Missing required fields:', {
+            logger.debug('❌ Missing required fields:', {
                 dispatchType: !!createData.dispatchType,
                 sourceSite: !!createData.sourceSite,
                 dispatchDate: !!createData.dispatchDate
@@ -293,7 +294,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Missing required fields (dispatchType, sourceSite, dispatchDate)' }, { status: 400 });
         }
 
-        console.log('✅ Required fields present');
+        logger.debug('✅ Required fields present');
 
         // Get selling price for this dispatch type and site
         const dispatchTypeId = resolveRef(createData.dispatchType);
@@ -304,17 +305,17 @@ export async function POST(request: Request) {
         }
 
         const sellingPrice = await getSellingPriceForSite(dispatchTypeId, siteId);
-        console.log('💰 Selling price:', sellingPrice);
+        logger.debug('💰 Selling price:', sellingPrice);
 
         // Process dispatched items with sourceBin
-        console.log('📋 Processing dispatched items...');
+        logger.debug('📋 Processing dispatched items...');
         const dispatchedItems = (createData.dispatchedItems || []).map((item: any, index: number) => {
             // Explicitly convert to Number for safe calculation
             const unitPrice = Number(item.unitPrice) || 0;
             const dispatchedQuantity = Number(item.dispatchedQuantity) || 0;
             const totalCost = unitPrice * dispatchedQuantity;
 
-            console.log(`   Item ${index + 1}:`, {
+            logger.debug(`   Item ${index + 1}:`, {
                 stockItem: resolveRef(item.stockItem),
                 sourceBin: resolveRef(item.sourceBin),
                 quantity: dispatchedQuantity,
@@ -346,7 +347,7 @@ export async function POST(request: Request) {
         const costPerPerson = peopleFed > 0 ? totalCost / peopleFed : 0;
         const totalSales = peopleFed > 0 ? peopleFed * (sellingPrice || 0) : 0;
 
-        console.log('💰 Calculations:', {
+        logger.debug('💰 Calculations:', {
             totalCost,
             peopleFed,
             costPerPerson,
@@ -355,9 +356,9 @@ export async function POST(request: Request) {
         });
 
         // Generate dispatch number
-        console.log('🔢 Generating dispatch number...');
+        logger.debug('🔢 Generating dispatch number...');
         const dispatchNumber = await getNextDispatchNumber();
-        console.log('✅ Dispatch number generated:', dispatchNumber);
+        logger.debug('✅ Dispatch number generated:', dispatchNumber);
 
         // ✅ CRITICAL FIX: Sync completion fields
         const evidenceStatus = createData.evidenceStatus || 'pending';
@@ -368,7 +369,7 @@ export async function POST(request: Request) {
         let finalStatus = status;
 
         if (evidenceStatus === 'complete' || status === 'completed') {
-            console.log('🔄 Syncing completion fields for new dispatch');
+            logger.debug('🔄 Syncing completion fields for new dispatch');
             finalEvidenceStatus = 'complete';
             finalStatus = 'completed';
         }
@@ -400,7 +401,7 @@ export async function POST(request: Request) {
             newDoc.completedAt = createData.completedAt || new Date().toISOString();
         }
 
-        console.log('📄 Document to create:', {
+        logger.debug('📄 Document to create:', {
             _id: newDoc._id,
             dispatchNumber: newDoc.dispatchNumber,
             evidenceStatus: newDoc.evidenceStatus,
@@ -410,9 +411,9 @@ export async function POST(request: Request) {
             sellingPrice: newDoc.sellingPrice
         });
 
-        console.log('💾 Creating document in Sanity...');
+        logger.debug('💾 Creating document in Sanity...');
         const result = await writeClient.create(newDoc);
-        console.log('✅ Document created successfully:', {
+        logger.debug('✅ Document created successfully:', {
             _id: result._id,
             dispatchNumber: result.dispatchNumber,
             evidenceStatus: result.evidenceStatus,
@@ -424,11 +425,11 @@ export async function POST(request: Request) {
         // 'completed', so dispatches created as completed never deducted stock.
         // Both fields are synced above, so either identifies a completed dispatch.)
         if (result.status === 'completed') {
-            console.log('📦 Updating stock for newly created completed dispatch');
+            logger.debug('📦 Updating stock for newly created completed dispatch');
             await updateStockForTransaction('dispatch', result._id);
         }
 
-        console.log('📝 Logging interaction...');
+        logger.debug('📝 Logging interaction...');
         await logSanityInteraction(
             'create',
             `Created new dispatch: ${newDoc.dispatchNumber} with total cost: E ${totalCost.toFixed(2)}`,
@@ -437,9 +438,9 @@ export async function POST(request: Request) {
             session.user.id,
             true
         );
-        console.log('✅ Interaction logged');
+        logger.debug('✅ Interaction logged');
 
-        console.log('🎉 Dispatch creation completed successfully');
+        logger.debug('🎉 Dispatch creation completed successfully');
         return NextResponse.json(result);
 
     } catch (error) {
@@ -522,7 +523,7 @@ export async function PATCH(request: Request) {
 
         // ✅ SYNC COMPLETION FIELDS
         if (willBeCompleted && !wasCompleted) {
-            console.log('🔄 Syncing completion fields for dispatch completion');
+            logger.debug('🔄 Syncing completion fields for dispatch completion');
             patch = patch.set({
                 evidenceStatus: 'complete',
                 status: 'completed'
@@ -630,7 +631,7 @@ export async function PATCH(request: Request) {
         // status was 'completed' but whose evidenceStatus was not yet 'complete'
         // (the edit guard above only blocks evidenceStatus === 'complete').
         if (willBeCompleted && !wasCompleted) {
-            console.log('📦 Updating stock for completed dispatch:', result.dispatchNumber);
+            logger.debug('📦 Updating stock for completed dispatch:', result.dispatchNumber);
             await updateStockForTransaction('dispatch', result._id);
         }
 

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/stock/bulk-current/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { calculateBulkStock } from '@/lib/stockCalculations';
@@ -13,7 +14,7 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
-		console.log(`📊 Batch fetching current stock for ${stockItems.length} items in bin ${binId}`);
+		logger.debug(`📊 Batch fetching current stock for ${stockItems.length} items in bin ${binId}`);
 
 		// Use the same function as the current stock page
 		const stockResults = await calculateBulkStock(stockItems, [binId]);
@@ -28,7 +29,7 @@ export async function POST(request: NextRequest) {
 		});
 
 		// Log for debugging
-		console.log('📊 Batch results:', {
+		logger.debug('📊 Batch results:', {
 			totalItems: stockItems.length,
 			itemsWithStock: Object.values(results).filter(qty => qty > 0).length,
 			sample: Object.entries(results).slice(0, 5)

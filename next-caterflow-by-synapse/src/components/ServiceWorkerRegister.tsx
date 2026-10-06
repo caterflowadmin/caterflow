@@ -1,5 +1,6 @@
 // components/ServiceWorkerRegister.tsx
 'use client';
+import { logger } from '@/lib/logger';
 
 import { useEffect } from 'react';
 
@@ -9,10 +10,10 @@ export function ServiceWorkerRegister() {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/sw.js')
                     .then((registration) => {
-                        console.log('SW registered: ', registration);
+                        logger.debug('SW registered: ', registration);
                     })
                     .catch((registrationError) => {
-                        console.log('SW registration failed: ', registrationError);
+                        logger.debug('SW registration failed: ', registrationError);
                     });
             });
         }

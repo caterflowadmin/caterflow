@@ -1,5 +1,6 @@
 // src/hooks/usePWAInstall.ts
 'use client';
+import { logger } from '@/lib/logger';
 
 import { useState, useEffect } from 'react';
 
@@ -63,7 +64,7 @@ export function usePWAInstall() {
 
   const promptInstall = async () => {
     if (!installPrompt) {
-      console.log('No install prompt available');
+      logger.debug('No install prompt available');
       return false;
     }
 
@@ -75,12 +76,12 @@ export function usePWAInstall() {
       const choiceResult = await installPrompt.userChoice;
 
       if (choiceResult.outcome === 'accepted') {
-        console.log('User accepted the install prompt');
+        logger.debug('User accepted the install prompt');
         setIsInstallable(false);
         setIsInstalled(true);
         return true;
       } else {
-        console.log('User dismissed the install prompt');
+        logger.debug('User dismissed the install prompt');
         // Keep the prompt available for later
         return false;
       }
