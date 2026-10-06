@@ -1,3 +1,6 @@
+import { logger } from '@/lib/logger';
+import { cachedLookup } from '@/lib/lookupCache';
+import { withInvalidation } from '@/lib/lookupCache';
 // app/api/stock-items/route.ts
 import { NextResponse } from "next/server";
 import { client, writeClient } from "@/lib/sanity"; // Import writeClient
@@ -29,7 +32,7 @@ export async function GET(request: Request) {
             }
         } | order(name asc)`;
 
-    const stockItems = await client.fetch(query, { search: `${search}*` });
+    const stockItems = await cachedLookup('stock-items', [search], () => client.fetch(query, { search: `${search}*` }), 30);
     return NextResponse.json(stockItems);
   } catch (error) {
     console.error("Failed to fetch stock items:", error);
@@ -40,10 +43,10 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function _POST(request: Request) {
   try {
     const body = await request.json();
-    console.log("Received POST data:", body);
+    logger.debug("Received POST data:", body);
 
     const {
       name,
@@ -93,10 +96,10 @@ export async function POST(request: Request) {
       ];
     }
 
-    console.log("Creating document:", document);
+    logger.debug("Creating document:", document);
     // Use writeClient instead of client for write operations
     const result = await writeClient.create(document);
-    console.log("Creation successful:", result);
+    logger.debug("Creation successful:", result);
 
     return NextResponse.json(result);
   } catch (error) {
@@ -110,10 +113,10 @@ export async function POST(request: Request) {
   }
 }
 
-export async function PUT(request: Request) {
+async function _PUT(request: Request) {
   try {
     const body = await request.json();
-    console.log("Received PUT data:", body);
+    logger.debug("Received PUT data:", body);
 
     const {
       _id,
@@ -172,10 +175,10 @@ export async function PUT(request: Request) {
       document.primarySupplier = undefined;
     }
 
-    console.log("Updating document:", document);
+    logger.debug("Updating document:", document);
     // Use writeClient instead of client for write operations
     const result = await writeClient.patch(_id).set(document).commit();
-    console.log("Update successful:", result);
+    logger.debug("Update successful:", result);
 
     return NextResponse.json(result);
   } catch (error) {
@@ -188,3 +191,6 @@ export async function PUT(request: Request) {
     );
   }
 }
+
+export const POST = withInvalidation(_POST, ['stock-items']);
+export const PUT = withInvalidation(_PUT, ['stock-items']);

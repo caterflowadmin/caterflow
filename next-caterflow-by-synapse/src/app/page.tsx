@@ -200,6 +200,8 @@ export default function Home() {
 
   const toast = useToast();
   const sitesContainerRef = useRef<HTMLDivElement>(null);
+  // Site whose stats arrived with the bootstrap response (skips one duplicate fetch).
+  const bootstrappedSiteRef = useRef<string | null>(null);
 
   const user = session?.user as SessionUser | undefined;
   const userRole = user?.role;
@@ -220,50 +222,40 @@ export default function Home() {
     const fetchSites = async () => {
       setIsSitesLoading(true);
       try {
-        let siteQuery = '';
-        let siteParams = {};
-
-        // Determine which sites the user can access based on role
-        if (userRole === 'siteManager') {
-          // Site managers can only see their associated site
-          if (associatedSite?._id) {
-            siteQuery = `*[_type == "Site" && _id == $siteId] | order(name asc) { _id, name }`;
-            siteParams = { siteId: associatedSite._id };
-          } else {
-            // No associated site - can't see any sites
-            setSites([]);
-            setSelectedSiteId(null);
-            setIsSitesLoading(false);
-            return;
-          }
-        } else if (userRole === 'admin' || userRole === 'auditor') {
-          // Admins and auditors can see all sites
-          siteQuery = `*[_type == "Site"] | order(name asc) { _id, name }`;
-        } else {
-          // Other roles with no site access
+        // Only admins, auditors and site managers see a site list on the dashboard.
+        if (userRole !== 'siteManager' && userRole !== 'admin' && userRole !== 'auditor') {
+          setSites([]);
+          setSelectedSiteId(null);
+          setIsSitesLoading(false);
+          return;
+        }
+        if (userRole === 'siteManager' && !associatedSite?._id) {
           setSites([]);
           setSelectedSiteId(null);
           setIsSitesLoading(false);
           return;
         }
 
-        const response = await fetch('/api/sanity', {
+        // One round trip: the server resolves this user's sites, picks the
+        // default (first) site and returns its stats too.
+        const response = await fetch('/api/dashboard/stats', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            query: siteQuery,
-            params: siteParams
-          }),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ selectFirstSite: true }),
         });
 
         if (!response.ok) {
           throw new Error('Failed to fetch sites');
         }
 
-        const fetchedSites: Site[] = await response.json();
+        const boot = await response.json();
+        const fetchedSites: Site[] = (boot.sites || []).map((s: any) => ({ _id: s._id, name: s.name }));
         setSites(fetchedSites);
+        if (boot.selectedSiteId) {
+          bootstrappedSiteRef.current = boot.selectedSiteId;
+          setTransactions(boot.transactions || []);
+          setDashboardStats(boot.stats || getEmptyStats());
+        }
 
         // Auto-select first site if available
         if (fetchedSites.length > 0) {
@@ -293,6 +285,13 @@ export default function Home() {
 
   useEffect(() => {
     if (!isAuthReady || isSitesLoading) return;
+
+    // Stats for the default site already came with the bootstrap response.
+    if (selectedSiteId && bootstrappedSiteRef.current === selectedSiteId) {
+      bootstrappedSiteRef.current = null;
+      setIsLoading(false);
+      return;
+    }
 
     const fetchDashboardData = async () => {
       setIsLoading(true);

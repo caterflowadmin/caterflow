@@ -1,4 +1,5 @@
 'use client';
+import { cachedFetch } from '@/lib/clientCache';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -74,8 +75,8 @@ export default function LocationsPage() {
         try {
             setLoading(true);
             const [sitesResponse, binsResponse] = await Promise.all([
-                fetch('/api/sites'),
-                fetch('/api/bins')
+                cachedFetch('/api/sites'),
+                cachedFetch('/api/bins')
             ]);
 
             if (!sitesResponse.ok || !binsResponse.ok) {

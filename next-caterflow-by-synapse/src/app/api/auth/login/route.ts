@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { writeClient } from '@/lib/sanity';
@@ -56,14 +57,14 @@ export async function POST(req: Request) {
   try {
     const { email, password } = await req.json();
 
-    console.log('Login attempt for email:', email);
+    logger.debug('Login attempt for email:', email);
 
     if (!email || !password) {
       return NextResponse.json({ message: 'Email and password are required.' }, { status: 400 });
     }
 
     const user = await fetchUserByEmail(email);
-    console.log('User fetched from Sanity:', user);
+    logger.debug('User fetched from Sanity:', user);
 
     if (!user) {
       return NextResponse.json({ message: 'Invalid credentials.' }, { status: 401 });
@@ -93,7 +94,7 @@ export async function POST(req: Request) {
       needsPasswordUpdate = true;
     }
 
-    console.log('Password match:', passwordMatch, 'Needs update:', needsPasswordUpdate);
+    logger.debug('Password match:', passwordMatch, 'Needs update:', needsPasswordUpdate);
 
     if (!passwordMatch) {
       await logSanityInteraction('login', 'Failed login attempt', 'AppUser', user._id, user.email, false, {

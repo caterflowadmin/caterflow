@@ -53,7 +53,6 @@ import {
   FiBriefcase,
 } from "react-icons/fi";
 import { useSession, signOut } from "next-auth/react";
-import { useLoading } from "@/context/LoadingContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { getFilteredMenuGroups } from "@/lib/navigationConfig";
 
@@ -74,7 +73,6 @@ const SidebarContent = ({ onItemClick }: { onItemClick?: () => void }) => {
     "Operations",
     "Administration",
   ]);
-  const { setLoading } = useLoading();
 
   // Theme-aware colors
   const sidebarBg = useColorModeValue(
@@ -114,7 +112,6 @@ const SidebarContent = ({ onItemClick }: { onItemClick?: () => void }) => {
   };
 
   const handleItemClick = (href: string) => {
-    setLoading(true);
     router.push(href);
     onItemClick?.();
   };
@@ -242,6 +239,9 @@ const SidebarContent = ({ onItemClick }: { onItemClick?: () => void }) => {
                       bg={pathname === item.href ? activeBg : "transparent"}
                       _hover={{ bg: activeBg }}
                       onClick={() => handleItemClick(item.href)}
+                      onMouseEnter={() => router.prefetch(item.href)}
+                      onFocus={() => router.prefetch(item.href)}
+                      onTouchStart={() => router.prefetch(item.href)}
                     >
                       {item.label}
                     </Button>

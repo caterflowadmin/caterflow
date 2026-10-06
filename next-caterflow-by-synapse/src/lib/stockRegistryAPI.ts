@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 /**
  * Client-side API for stock registry updates
  * Calls server-side API routes instead of using writeClient directly
@@ -25,7 +26,7 @@ export async function bulkUpdateStockRegistryAPI(
 
 	while (retryCount <= maxRetries) {
 		try {
-			console.log(`📤 Calling API for ${updates.length} registry updates (attempt ${retryCount + 1}/${maxRetries + 1})`);
+			logger.debug(`📤 Calling API for ${updates.length} registry updates (attempt ${retryCount + 1}/${maxRetries + 1})`);
 
 			const response = await fetch('/api/stock/registry/bulk-update', {
 				method: 'POST',
@@ -41,7 +42,7 @@ export async function bulkUpdateStockRegistryAPI(
 			const result = await response.json();
 
 			if (result.success) {
-				console.log(`✅ API call successful: ${result.results.success} succeeded, ${result.results.failed} failed`);
+				logger.debug(`✅ API call successful: ${result.results.success} succeeded, ${result.results.failed} failed`);
 				return result.results;
 			} else {
 				throw new Error(result.error || 'API returned unsuccessful');
@@ -52,7 +53,7 @@ export async function bulkUpdateStockRegistryAPI(
 			retryCount++;
 
 			if (retryCount <= maxRetries) {
-				console.log(`🔄 Retrying in ${1000 * retryCount}ms...`);
+				logger.debug(`🔄 Retrying in ${1000 * retryCount}ms...`);
 				await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
 			} else {
 				console.error('❌ All API retries failed');

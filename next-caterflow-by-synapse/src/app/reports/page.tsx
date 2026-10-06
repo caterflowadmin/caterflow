@@ -1,5 +1,7 @@
 // src/app/reports/page.tsx - COMPREHENSIVE FIX: correct stock math, normalized VAT, robust filtering
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
+import { logger } from '@/lib/logger';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
@@ -897,9 +899,9 @@ export default function ComprehensiveReportsPage() {
           sites = [],
         } = data;
 
-        console.log("📊 Processing analytics data with VAT calculations...");
-        console.log("🔹 Filtered receipts provided:", !!filteredGoodsReceipts);
-        console.log("🔹 Filtered dispatches provided:", !!filteredDispatches);
+        logger.debug("📊 Processing analytics data with VAT calculations...");
+        logger.debug("🔹 Filtered receipts provided:", !!filteredGoodsReceipts);
+        logger.debug("🔹 Filtered dispatches provided:", !!filteredDispatches);
 
         // Filter data by date range for period-based calculations
         const periodPOs = filterDataByDateRange(purchaseOrders, "orderDate");
@@ -969,7 +971,7 @@ export default function ComprehensiveReportsPage() {
         const profitPercentage =
           periodSalesExclVAT > 0 ? (netProfit / periodSalesExclVAT) * 100 : 0;
 
-        console.log("💰 FINAL Financial calculations:", {
+        logger.debug("💰 FINAL Financial calculations:", {
           openingStockValue: openingStockValue.toFixed(2),
           periodPurchasesExclVAT: periodPurchasesExclVAT.toFixed(2),
           periodConsumptionExclVAT: periodConsumptionExclVAT.toFixed(2),
@@ -1547,10 +1549,10 @@ export default function ComprehensiveReportsPage() {
       }
 
       try {
-        console.log(`🔍 Getting filtered stock for site: ${filterSiteId}`);
+        logger.debug(`🔍 Getting filtered stock for site: ${filterSiteId}`);
 
         // Get bins for this site
-        const binsResponse = await fetch(`/api/bins?siteId=${filterSiteId}`);
+        const binsResponse = await cachedFetch(`/api/bins?siteId=${filterSiteId}`);
         if (!binsResponse.ok) {
           throw new Error("Failed to fetch bins for site");
         }
@@ -1561,7 +1563,7 @@ export default function ComprehensiveReportsPage() {
           .map((bin: any) => bin._id)
           .filter(Boolean);
 
-        console.log(`📦 Found ${binIds.length} bins for site ${filterSiteId}`);
+        logger.debug(`📦 Found ${binIds.length} bins for site ${filterSiteId}`);
 
         // Get all stock item IDs with proper typing
         const stockItemIds: string[] = stockItems
@@ -1610,7 +1612,7 @@ export default function ComprehensiveReportsPage() {
           };
         });
 
-        console.log(
+        logger.debug(
           `💰 Site-filtered inventory: ${totalInventoryValue} (${itemsWithSiteStock.length} items)`,
         );
 
@@ -1641,7 +1643,7 @@ export default function ComprehensiveReportsPage() {
       skipAnalytics: boolean = false,
     ) => {
       try {
-        console.log(
+        logger.debug(
           "🔍 Processing analytics data with client-side filtering...",
           {
             filterSiteId,
@@ -1663,7 +1665,7 @@ export default function ComprehensiveReportsPage() {
           "dispatch",
         );
 
-        console.log("📦 After site filtering:", {
+        logger.debug("📦 After site filtering:", {
           goodsReceipts: filteredGoodsReceipts.length,
           dispatches: filteredDispatches.length,
         });
@@ -1685,7 +1687,7 @@ export default function ComprehensiveReportsPage() {
           sites: data.sites,
         };
 
-        console.log("📊 After client-side filtering:", {
+        logger.debug("📊 After client-side filtering:", {
           purchaseOrders: filteredData.purchaseOrders.length,
           goodsReceipts: filteredData.goodsReceipts.length,
           dispatches: filteredData.dispatches.length,
@@ -1697,27 +1699,27 @@ export default function ComprehensiveReportsPage() {
         // IMPORTANT FIX: Get site-specific stock values
         let filteredStockValues = data.stockValues;
         if (filterSiteId && data.stockItems) {
-          console.log(`🔍 Getting filtered stock for site: ${filterSiteId}`);
+          logger.debug(`🔍 Getting filtered stock for site: ${filterSiteId}`);
           filteredStockValues = await getFilteredStockValues(
             data.stockItems,
             filterSiteId,
             data.sites || [],
           );
         } else {
-          console.log("📊 Using unfiltered stock values (all sites)");
+          logger.debug("📊 Using unfiltered stock values (all sites)");
         }
 
         // If skipAnalytics is true, we preserve the legacy flag but still
         // run full analytics so filtered site totals remain accurate.
         if (skipAnalytics && analyticsData) {
-          console.log(
+          logger.debug(
             "⚡ Legacy skipAnalytics flag detected; recalculating filtered analytics for correctness",
           );
           // Continue to full analytics processing to avoid stale metrics.
         }
 
         // Full analytics processing with filtered data
-        console.log(
+        logger.debug(
           "🔄 Running full analytics processing with filtered data...",
         );
         const analytics = await processAnalyticsData(
@@ -1734,7 +1736,7 @@ export default function ComprehensiveReportsPage() {
         );
 
         setAnalyticsData(analytics);
-        console.log(
+        logger.debug(
           "✅ Analytics data with client-side filtering processed successfully",
         );
       } catch (error) {
@@ -1823,7 +1825,7 @@ export default function ComprehensiveReportsPage() {
       // Start the fast summary immediately; the full download continues below.
       const finPromise = fetchServerFinancials(selectedFilterSite);
       try {
-        console.log(
+        logger.debug(
           "🔄 Starting comprehensive data fetch for analytics with VAT...",
           {
             forceRefresh,
@@ -1841,7 +1843,7 @@ export default function ComprehensiveReportsPage() {
 
         // Check if we already have data and don't force refresh
         if (!forceRefresh && Object.keys(rawData).length > 0 && analyticsData) {
-          console.log("📊 Using cached data, skipping fetch");
+          logger.debug("📊 Using cached data, skipping fetch");
           await finPromise;
           setAnalyticsLoading(false);
           return;
@@ -1878,7 +1880,7 @@ export default function ComprehensiveReportsPage() {
           buildUrl("/api/sites"),
         ];
 
-        console.log(
+        logger.debug(
           "📡 Fetching from endpoints (NO site filtering - getting ALL data):",
           endpoints.map((e) => e.split("?")[0]),
         );
@@ -1900,7 +1902,7 @@ export default function ComprehensiveReportsPage() {
         const results = await Promise.allSettled(
           endpoints.map(async (endpoint) => {
             try {
-              console.log(`📡 Fetching from ${endpoint.split("?")[0]}...`);
+              logger.debug(`📡 Fetching from ${endpoint.split("?")[0]}...`);
               const response = await fetch(endpoint);
               if (!response.ok) {
                 throw new Error(
@@ -1935,7 +1937,7 @@ export default function ComprehensiveReportsPage() {
         ] = results.map((result, index) => {
           if (result.status === "fulfilled") {
             const data = result.value;
-            console.log(
+            logger.debug(
               `✅ Successfully fetched from ${endpoints[index].split("?")[0]}:`,
               Array.isArray(data) ? data.length : "object received",
             );
@@ -1950,7 +1952,7 @@ export default function ComprehensiveReportsPage() {
         });
 
         // Apply VAT calculations to ALL data (before filtering)
-        console.log("🧮 Applying VAT calculations to all data...");
+        logger.debug("🧮 Applying VAT calculations to all data...");
         const purchaseOrdersWithVAT = calculatePurchaseOrderVAT(
           purchaseOrders || [],
         );
@@ -2011,7 +2013,7 @@ export default function ComprehensiveReportsPage() {
             data: newRawData,
           };
         }
-        console.log("✅ All raw data stored with VAT calculations");
+        logger.debug("✅ All raw data stored with VAT calculations");
 
         // The calculation needs the period anchor; the fast summary request
         // started at the top has normally finished long before this point.
@@ -2656,7 +2658,7 @@ export default function ComprehensiveReportsPage() {
   const exportToExcel = useCallback(async () => {
     setExportLoading(true);
     try {
-      console.log("📊 Starting comprehensive Excel export with VAT...");
+      logger.debug("📊 Starting comprehensive Excel export with VAT...");
       const [XLSX, { saveAs }] = await Promise.all([
         import("xlsx"),
         import("file-saver"),
@@ -2668,7 +2670,7 @@ export default function ComprehensiveReportsPage() {
         Object.values(rawData).some((data: any) => data && data.length > 0);
 
       if (!hasData) {
-        console.log("🔄 No data available, fetching data first...");
+        logger.debug("🔄 No data available, fetching data first...");
         await fetchAllData(true);
 
         // Check again after fetch
@@ -2694,14 +2696,14 @@ export default function ComprehensiveReportsPage() {
       const workbook = XLSX.utils.book_new();
 
       // 1. EXECUTIVE SUMMARY SHEET WITH VAT
-      console.log("📝 Creating Executive Summary sheet with VAT...");
+      logger.debug("📝 Creating Executive Summary sheet with VAT...");
       const summaryData = createFormattedSummaryData();
       const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
       autoFitColumns(summarySheet);
       XLSX.utils.book_append_sheet(workbook, summarySheet, "Executive Summary");
 
       // 2. SALES SUMMARY SHEET WITH VAT
-      console.log("📝 Creating Sales Summary sheet with VAT...");
+      logger.debug("📝 Creating Sales Summary sheet with VAT...");
       const salesSummaryData = createFormattedSalesSummaryData(
         rawData.dispatches || [],
       );
@@ -2714,7 +2716,7 @@ export default function ComprehensiveReportsPage() {
       );
 
       // 3. PURCHASE ORDERS SHEET WITH VAT
-      console.log("📝 Creating Purchase Orders sheet with VAT...");
+      logger.debug("📝 Creating Purchase Orders sheet with VAT...");
       const periodPOs = filterDataByDateRange(
         rawData.purchaseOrders || [],
         "orderDate",
@@ -2745,7 +2747,7 @@ export default function ComprehensiveReportsPage() {
       }
 
       // 4. GOODS RECEIPTS SHEET WITH VAT
-      console.log("📝 Creating Goods Receipts sheet with VAT...");
+      logger.debug("📝 Creating Goods Receipts sheet with VAT...");
       const periodGoodsReceipts = filterDataByDateRange(
         rawData.goodsReceipts || [],
         "receiptDate",
@@ -2785,7 +2787,7 @@ export default function ComprehensiveReportsPage() {
       }
 
       // 5. DISPATCHES SHEET WITH VAT
-      console.log("📝 Creating Dispatches sheet with VAT...");
+      logger.debug("📝 Creating Dispatches sheet with VAT...");
       const periodDispatches = filterDataByDateRange(
         rawData.dispatches || [],
         "dispatchDate",
@@ -2827,7 +2829,7 @@ export default function ComprehensiveReportsPage() {
       }
 
       // 6. VAT ANALYSIS SHEET
-      console.log("📝 Creating VAT Analysis sheet...");
+      logger.debug("📝 Creating VAT Analysis sheet...");
       const vatAnalysisData = [
         ["VAT ANALYSIS REPORT", ""],
         ["", ""],
@@ -2888,7 +2890,7 @@ export default function ComprehensiveReportsPage() {
       XLSX.utils.book_append_sheet(workbook, vatAnalysisSheet, "VAT Analysis");
 
       // 7. TRANSFERS SHEET
-      console.log("📝 Creating Transfers sheet...");
+      logger.debug("📝 Creating Transfers sheet...");
       const periodTransfers = filterDataByDateRange(
         rawData.transfers || [],
         "transferDate",
@@ -2915,7 +2917,7 @@ export default function ComprehensiveReportsPage() {
       }
 
       // 8. BIN COUNTS SHEET
-      console.log("📝 Creating Bin Counts sheet...");
+      logger.debug("📝 Creating Bin Counts sheet...");
       const periodBinCounts = filterDataByDateRange(
         rawData.binCounts || [],
         "countDate",
@@ -2947,7 +2949,7 @@ export default function ComprehensiveReportsPage() {
       }
 
       // 9. STOCK ITEMS SHEET WITH VAT
-      console.log("📝 Creating Stock Items sheet with VAT...");
+      logger.debug("📝 Creating Stock Items sheet with VAT...");
       const stockItemsArray = Array.isArray(rawData.stockItems)
         ? rawData.stockItems
         : (rawData.stockItems as any)?.items || [];
@@ -2978,7 +2980,7 @@ export default function ComprehensiveReportsPage() {
       }
 
       // 10. LOW STOCK ALERTS SHEET
-      console.log("📝 Creating Low Stock Alerts sheet...");
+      logger.debug("📝 Creating Low Stock Alerts sheet...");
       const lowStockData =
         rawData.lowStock?.map((item: any) => ({
           Name: item.name || "N/A",
@@ -3008,14 +3010,14 @@ export default function ComprehensiveReportsPage() {
       }
 
       // 11. ANALYTICS DATA SHEET WITH VAT
-      console.log("📝 Creating Analytics Data sheet with VAT...");
+      logger.debug("📝 Creating Analytics Data sheet with VAT...");
       const analyticsSheetData = createFormattedAnalyticsData();
       const analyticsSheet = XLSX.utils.aoa_to_sheet(analyticsSheetData);
       autoFitColumns(analyticsSheet);
       XLSX.utils.book_append_sheet(workbook, analyticsSheet, "Analytics Data");
 
       // 12. SUPPLIER PERFORMANCE SHEET WITH VAT
-      console.log("📝 Creating Supplier Performance sheet with VAT...");
+      logger.debug("📝 Creating Supplier Performance sheet with VAT...");
       const supplierData =
         analyticsData?.suppliers.performance.map((supplier) => ({
           "Supplier Name": supplier.name || "N/A",
@@ -3037,7 +3039,7 @@ export default function ComprehensiveReportsPage() {
       }
 
       // Generate Excel file
-      console.log("💾 Generating Excel file with VAT...");
+      logger.debug("💾 Generating Excel file with VAT...");
       const excelBuffer = XLSX.write(workbook, {
         bookType: "xlsx",
         type: "array",
@@ -3048,7 +3050,7 @@ export default function ComprehensiveReportsPage() {
       const fileName = `Caterflow_Comprehensive_Report_VAT_${format(new Date(), "yyyy-MM-dd")}.xlsx`;
       saveAs(data, fileName);
 
-      console.log("✅ Excel export with VAT completed successfully");
+      logger.debug("✅ Excel export with VAT completed successfully");
       toast({
         title: "Export Successful",
         description: `Report exported with ${workbook.SheetNames.length} sheets including VAT analysis`,
@@ -3212,7 +3214,7 @@ export default function ComprehensiveReportsPage() {
         );
         if (!config) return;
 
-        console.log(
+        logger.debug(
           `📡 Fetching ${reportTitle} data from ${config.endpoint}...`,
         );
         const response = await fetch(config.endpoint);
@@ -3234,7 +3236,7 @@ export default function ComprehensiveReportsPage() {
           data = calculateDispatchVAT(data);
         }
 
-        console.log(
+        logger.debug(
           `✅ ${reportTitle} data fetched with VAT:`,
           data.length,
           "items",
@@ -3288,11 +3290,11 @@ export default function ComprehensiveReportsPage() {
   useEffect(() => {
     const fetchSites = async () => {
       try {
-        console.log("🌐 Fetching sites for reports...");
-        const response = await fetch("/api/sites");
+        logger.debug("🌐 Fetching sites for reports...");
+        const response = await cachedFetch("/api/sites");
         if (response.ok) {
           const data = await response.json();
-          console.log("✅ Sites fetched:", data.length, "sites");
+          logger.debug("✅ Sites fetched:", data.length, "sites");
           setSites(data);
         }
       } catch (error) {
@@ -3378,10 +3380,10 @@ export default function ComprehensiveReportsPage() {
   const exportAllReports = useCallback(async () => {
     try {
       setAnalyticsLoading(true);
-      console.log("📊 Starting export of all reports with VAT...");
+      logger.debug("📊 Starting export of all reports with VAT...");
 
       const fetchPromises = reportConfigs.map(async (config) => {
-        console.log(`📡 Fetching ${config.title}...`);
+        logger.debug(`📡 Fetching ${config.title}...`);
         const response = await fetch(config.endpoint);
         if (!response.ok) {
           throw new Error(`Failed to fetch ${config.title}`);
@@ -3401,7 +3403,7 @@ export default function ComprehensiveReportsPage() {
       });
 
       const allData = await Promise.all(fetchPromises);
-      console.log("✅ All reports data fetched with VAT");
+      logger.debug("✅ All reports data fetched with VAT");
 
       let combinedCsv = "";
 
@@ -3449,7 +3451,7 @@ export default function ComprehensiveReportsPage() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      console.log("✅ All reports with VAT exported successfully");
+      logger.debug("✅ All reports with VAT exported successfully");
       toast({
         title: "Export Successful",
         description: "All reports combined into a single CSV file with VAT",
@@ -3648,7 +3650,7 @@ export default function ComprehensiveReportsPage() {
         userRole,
       );
 
-      console.log("👤 User session for reports:", {
+      logger.debug("👤 User session for reports:", {
         userId: session.user.id,
         userRole,
         userSiteId,
@@ -3670,7 +3672,7 @@ export default function ComprehensiveReportsPage() {
   useEffect(() => {
     const fetchAvailableSites = async () => {
       try {
-        const response = await fetch("/api/sites");
+        const response = await cachedFetch("/api/sites");
         if (response.ok) {
           const allSites = await response.json();
 

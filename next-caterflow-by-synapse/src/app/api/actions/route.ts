@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/actions/route.ts
 export const dynamic = 'force-dynamic';
 
@@ -143,8 +144,8 @@ export async function GET(request: Request) {
     const userRole = searchParams.get("userRole");
     const userSite = searchParams.get("userSite");
 
-    console.log("➡️ /api/actions: Request received.");
-    console.log("➡️ /api/actions: Fetching actions for:", { userId, userRole, userSite });
+    logger.debug("➡️ /api/actions: Request received.");
+    logger.debug("➡️ /api/actions: Fetching actions for:", { userId, userRole, userSite });
 
     // Get user site info for filtering
     const userSiteInfo = await getUserSiteInfo(request);
@@ -160,26 +161,26 @@ export async function GET(request: Request) {
 
     // Combine the results into a single array
     let actions = [...transfers, ...purchaseOrders, ...goodsReceipts];
-    console.log(`✅ /api/actions: Raw actions from Sanity fetched. Count: ${actions.length}`);
+    logger.debug(`✅ /api/actions: Raw actions from Sanity fetched. Count: ${actions.length}`);
 
     // Filter actions based on user role and site (additional client-side filtering if needed)
     if (userRole === "admin" || userRole === "auditor" || userRole === "procurer") {
-      console.log("👤 User Role: Admin/Auditor/Procurer. No additional filtering applied.");
+      logger.debug("👤 User Role: Admin/Auditor/Procurer. No additional filtering applied.");
     } else if (["siteManager", "stockController", "dispatchStaff"].includes(userRole || "") && userSite) {
       actions = actions.filter((action: any) => {
         return action.site === userSite ||
           action.fromSite === userSite ||
           action.toSite === userSite;
       });
-      console.log(`👤 ${userRole}. Filtered actions for site ${userSite}: ${actions.length}`);
+      logger.debug(`👤 ${userRole}. Filtered actions for site ${userSite}: ${actions.length}`);
     } else {
       actions = [];
-      console.log("⚠️ Unknown role or missing site. No actions returned.");
+      logger.debug("⚠️ Unknown role or missing site. No actions returned.");
     }
 
     // Sort newest first
     actions.sort((a: any, b: any) => new Date(b._createdAt).getTime() - new Date(a._createdAt).getTime());
-    console.log(`✅ /api/actions: Sorting complete. Returning ${actions.length} actions.`);
+    logger.debug(`✅ /api/actions: Sorting complete. Returning ${actions.length} actions.`);
 
     // Build response and explicitly prevent caching at HTTP level
     const response = NextResponse.json(actions);

@@ -4,7 +4,6 @@ import { Inter } from "next/font/google";
 import { Providers } from "./providers";
 import { Sidebar } from "@/components/Sidebar";
 import { MobileTopbar } from "@/components/MobileTopbar";
-import { SidebarProvider } from "@/context/SidebarContext";
 import { Box } from "@chakra-ui/react";
 import { Footer } from "@/components/Footer";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
@@ -43,7 +42,6 @@ export default function RootLayout({
       </head>
       <body className={inter.className}>
         <Providers>
-          <SidebarProvider>
             <MobileTopbar />
             <Sidebar />
             <Box
@@ -61,7 +59,6 @@ export default function RootLayout({
             </Box>
             <ServiceWorkerRegister />
             <InstallButton /> {/* Add the InstallButton here */}
-          </SidebarProvider>
         </Providers>
       </body>
     </html>

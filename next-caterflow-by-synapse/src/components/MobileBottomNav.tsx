@@ -24,7 +24,6 @@ import {
   FiMenu,
 } from "react-icons/fi";
 import { useSidebar } from "@/context/SidebarContext";
-import { useLoading } from "@/context/LoadingContext";
 import { getBottomNavItems } from "@/lib/navigationConfig";
 
 export const MobileBottomNav = () => {
@@ -32,7 +31,6 @@ export const MobileBottomNav = () => {
   const pathname = usePathname();
   const { data: session } = useSession();
   const { toggleSidebar } = useSidebar();
-  const { setLoading } = useLoading();
 
   const bg = useColorModeValue("white", "gray.900");
   const borderColor = useColorModeValue("gray.200", "gray.700");
@@ -43,7 +41,6 @@ export const MobileBottomNav = () => {
   const navItems = getBottomNavItems(userRole, 4);
 
   const navigateTo = (href: string) => {
-    setLoading?.(true);
     router.push(href);
   };
 
@@ -72,6 +69,7 @@ export const MobileBottomNav = () => {
                 variant="ghost"
                 color={isActive ? activeColor : inactiveColor}
                 onClick={() => navigateTo(item.href)}
+                onTouchStart={() => router.prefetch(item.href)}
                 fontSize="20px"
                 _hover={{ bg: "transparent", color: activeColor }}
               />

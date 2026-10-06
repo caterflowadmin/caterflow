@@ -1,5 +1,7 @@
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
 
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from "react";
 import {
   Box,
@@ -98,7 +100,7 @@ export default function UsersPage() {
     try {
       const [usersResponse, sitesResponse] = await Promise.all([
         fetch("/api/users"),
-        fetch("/api/sites"),
+        cachedFetch("/api/sites"),
       ]);
 
       if (!usersResponse.ok || !sitesResponse.ok) {
@@ -111,8 +113,8 @@ export default function UsersPage() {
       ]);
 
       // Debug: Log what we're getting from the API
-      console.log("Users data from API:", usersData);
-      console.log("Sites data from API:", sitesData);
+      logger.debug("Users data from API:", usersData);
+      logger.debug("Sites data from API:", sitesData);
 
       // The API already returns expanded site objects, so no need to map
       setUsers(usersData);

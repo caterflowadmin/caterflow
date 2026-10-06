@@ -1,3 +1,5 @@
+import { cachedLookup } from '@/lib/lookupCache';
+import { withInvalidation } from '@/lib/lookupCache';
 import { NextRequest, NextResponse } from "next/server";
 import { writeClient } from "@/lib/sanity";
 import { groq } from "next-sanity";
@@ -77,7 +79,12 @@ export async function GET(req: NextRequest) {
             }`;
     }
 
-    const bins = await writeClient.fetch(query, params);
+    const bins = await cachedLookup(
+      'bins',
+      [siteId, allowAll ? 'all' : 'scoped', baseSiteFilter],
+      () => writeClient.fetch(query, params),
+      60,
+    );
     return NextResponse.json(bins);
   } catch (error) {
     console.error("Error fetching bins:", error);
@@ -89,7 +96,7 @@ export async function GET(req: NextRequest) {
 }
 
 // CREATE a new bin
-export async function POST(req: NextRequest) {
+async function _POST(req: NextRequest) {
   try {
     const binData: BinData = await req.json();
     const userSiteInfo = await getUserSiteInfo(req);
@@ -161,7 +168,7 @@ export async function POST(req: NextRequest) {
 }
 
 // UPDATE a bin
-export async function PATCH(req: NextRequest) {
+async function _PATCH(req: NextRequest) {
   try {
     const binData: BinData = await req.json();
     const userSiteInfo = await getUserSiteInfo(req);
@@ -261,7 +268,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 // DELETE a bin
-export async function DELETE(req: NextRequest) {
+async function _DELETE(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
@@ -335,3 +342,7 @@ export async function DELETE(req: NextRequest) {
     );
   }
 }
+
+export const POST = withInvalidation(_POST, ['bins', 'sites', 'locations']);
+export const PATCH = withInvalidation(_PATCH, ['bins', 'sites', 'locations']);
+export const DELETE = withInvalidation(_DELETE, ['bins', 'sites', 'locations']);

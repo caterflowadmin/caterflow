@@ -1,5 +1,6 @@
 "use client";
 
+import { logger } from '@/lib/logger';
 // Chart components for the reports page. Lives in its own module so recharts
 // (a large dependency) is code-split: page.tsx loads these with next/dynamic
 // the first time a chart is rendered, instead of shipping them in the main
@@ -112,9 +113,9 @@ export const BarChartComponent = ({
   const [isMounted, setIsMounted] = useState(false);
 
   // Add this to each chart component at the beginning
-  console.log(`📊 ${title} - Data:`, data?.length, "items");
-  console.log(`📊 ${title} - isMounted:`, isMounted);
-  console.log(`📊 ${title} - isLoading:`, isLoading);
+  logger.debug(`📊 ${title} - Data:`, data?.length, "items");
+  logger.debug(`📊 ${title} - isMounted:`, isMounted);
+  logger.debug(`📊 ${title} - isLoading:`, isLoading);
 
   useEffect(() => {
     setIsMounted(true);
@@ -213,9 +214,9 @@ export const LineChartComponent = ({
   const [isMounted, setIsMounted] = useState(false);
 
   // Add this to each chart component at the beginning
-  console.log(`📊 ${title} - Data:`, data?.length, "items");
-  console.log(`📊 ${title} - isMounted:`, isMounted);
-  console.log(`📊 ${title} - isLoading:`, isLoading);
+  logger.debug(`📊 ${title} - Data:`, data?.length, "items");
+  logger.debug(`📊 ${title} - isMounted:`, isMounted);
+  logger.debug(`📊 ${title} - isLoading:`, isLoading);
 
   useEffect(() => {
     setIsMounted(true);
@@ -309,9 +310,9 @@ export const StatusPieChart = ({
   const [isMounted, setIsMounted] = useState(false);
 
   // Add this to each chart component at the beginning
-  console.log(`📊 ${title} - Data:`, data?.length, "items");
-  console.log(`📊 ${title} - isMounted:`, isMounted);
-  console.log(`📊 ${title} - isLoading:`, isLoading);
+  logger.debug(`📊 ${title} - Data:`, data?.length, "items");
+  logger.debug(`📊 ${title} - isMounted:`, isMounted);
+  logger.debug(`📊 ${title} - isLoading:`, isLoading);
 
   useEffect(() => {
     setIsMounted(true);

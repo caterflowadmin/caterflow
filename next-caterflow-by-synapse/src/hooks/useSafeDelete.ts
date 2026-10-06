@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/hooks/useSafeDelete.ts
 // React hook for safe deletion with automatic backup enforcement
 // Ensures a recent backup exists before allowing Sanity data deletion
@@ -71,7 +72,7 @@ export function useSafeDelete(options: UseSafeDeleteOptions = {}) {
   const log = useCallback(
     (message: string) => {
       if (verbose) {
-        console.log(`[useSafeDelete] ${message}`);
+        logger.debug(`[useSafeDelete] ${message}`);
       }
     },
     [verbose],

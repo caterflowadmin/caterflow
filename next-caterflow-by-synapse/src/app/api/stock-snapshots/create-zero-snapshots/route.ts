@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // app/api/stock/create-zero-snapshots/route.ts
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -21,7 +22,7 @@ export async function POST(request: Request) {
 			);
 		}
 
-		console.log(`📝 Creating ${items.length} zero stock snapshots via API...`);
+		logger.debug(`📝 Creating ${items.length} zero stock snapshots via API...`);
 
 		const now = new Date().toISOString();
 		const batchSize = 50;
@@ -46,7 +47,7 @@ export async function POST(request: Request) {
 
 			await transaction.commit();
 			createdCount += batch.length;
-			console.log(`✅ Created batch ${Math.floor(i / batchSize) + 1} (${batch.length} snapshots)`);
+			logger.debug(`✅ Created batch ${Math.floor(i / batchSize) + 1} (${batch.length} snapshots)`);
 		}
 
 		return NextResponse.json({

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/goods-receipts/[id]/route.ts
 import { client, writeClient } from "@/lib/sanity";
 import { groq } from "next-sanity";
@@ -50,7 +51,7 @@ export async function GET(
     const userSiteInfo = await getUserSiteInfo();
     const siteFilter = buildGoodsReceiptSiteFilter(userSiteInfo);
 
-    console.log(
+    logger.debug(
       `🔍 Getting individual goods receipt ${id} with site filter:`,
       siteFilter,
     );
@@ -168,7 +169,7 @@ export async function GET(
     let goodsReceipt = await client.fetch(query, { id });
 
     if (!goodsReceipt) {
-      console.log(
+      logger.debug(
         `❌ Goods receipt ${id} not found or user doesn't have access`,
       );
       const archived = await getArchivedGoodsReceiptById(id);
@@ -185,7 +186,7 @@ export async function GET(
       };
     }
 
-    console.log(
+    logger.debug(
       `✅ Found goods receipt ${goodsReceipt.receiptNumber} for user`,
     );
 
@@ -199,7 +200,7 @@ export async function GET(
       goodsReceipt.receivingBin &&
       !goodsReceipt.receivedItems?.every((item: any) => item.receivingBin)
     ) {
-      console.log(
+      logger.debug(
         `🔄 Transforming old receipt ${goodsReceipt.receiptNumber} to item-level bin structure`,
       );
       goodsReceipt.receivedItems = (goodsReceipt.receivedItems || []).map(
@@ -267,7 +268,7 @@ export async function PUT(
 
     const updateData = await request.json();
 
-    console.log("🔄 PUT goods receipt update:", {
+    logger.debug("🔄 PUT goods receipt update:", {
       id,
       status: updateData.status,
       receivedItemsCount: updateData.receivedItems?.length || 0,
@@ -319,7 +320,7 @@ export async function PUT(
     // Process receivedItems to include receivingBin references
     let processedReceivedItems;
     if (updateData.receivedItems) {
-      console.log(
+      logger.debug(
         "📦 Processing received items for bins:",
         updateData.receivedItems.length,
       );
@@ -355,17 +356,17 @@ export async function PUT(
                 _type: "reference",
                 _ref: binRef,
               };
-              console.log(`   Item has bin: ${binRef}`);
+              logger.debug(`   Item has bin: ${binRef}`);
             }
           } else {
-            console.log("   Item missing bin");
+            logger.debug("   Item missing bin");
           }
 
           return processedItem;
         },
       );
 
-      console.log(
+      logger.debug(
         `✅ Processed ${processedReceivedItems.length} items, ${processedReceivedItems.filter((item: any) => item.receivingBin).length} with bins`,
       );
     }
@@ -415,7 +416,7 @@ export async function PUT(
       patchData.attachments = updateData.attachments;
     }
 
-    console.log("📝 Patch data:", {
+    logger.debug("📝 Patch data:", {
       itemCount: patchData.receivedItems?.length || 0,
       status: patchData.status,
       itemsWithBins:
@@ -429,7 +430,7 @@ export async function PUT(
 
     // Update stock if status changed TO 'completed'
     if (patchData.status === "completed") {
-      console.log(
+      logger.debug(
         "📦 Updating stock for status change to completed:",
         existingReceipt.receiptNumber,
       );

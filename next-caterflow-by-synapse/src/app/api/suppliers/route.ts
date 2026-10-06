@@ -1,3 +1,5 @@
+import { cachedLookup } from '@/lib/lookupCache';
+import { withInvalidation } from '@/lib/lookupCache';
 // src/app/api/suppliers/route.ts
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -10,7 +12,7 @@ export async function GET() {
       _id, name, contactPerson, phoneNumber, email, address, terms
     }`;
 
-        const suppliers = await client.fetch(query);
+        const suppliers = await cachedLookup('suppliers', [], () => client.fetch(query), 120);
         return NextResponse.json(suppliers);
     } catch (error) {
         console.error('Failed to fetch suppliers:', error);
@@ -21,7 +23,7 @@ export async function GET() {
     }
 }
 
-export async function POST(request: Request) {
+async function _POST(request: Request) {
     try {
         const body = await request.json();
 
@@ -49,7 +51,7 @@ export async function POST(request: Request) {
     }
 }
 
-export async function PATCH(request: Request) {
+async function _PATCH(request: Request) {
     try {
         const body = await request.json();
         const { _id, ...updateData } = body;
@@ -78,7 +80,7 @@ export async function PATCH(request: Request) {
     }
 }
 
-export async function DELETE(request: Request) {
+async function _DELETE(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');
@@ -110,3 +112,7 @@ export async function DELETE(request: Request) {
         );
     }
 }
+
+export const POST = withInvalidation(_POST, ['suppliers']);
+export const PATCH = withInvalidation(_PATCH, ['suppliers']);
+export const DELETE = withInvalidation(_DELETE, ['suppliers']);

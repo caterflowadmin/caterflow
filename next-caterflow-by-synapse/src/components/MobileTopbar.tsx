@@ -9,14 +9,12 @@ import Image from 'next/image';
 import { usePWAInstall } from '@/hooks/usePWAInstall';
 import { Button, Icon } from '@chakra-ui/react';
 import { FiDownload } from 'react-icons/fi';
-import { useLoading } from '@/context/LoadingContext';
 import { useRouter, usePathname } from 'next/navigation';
 
 export const MobileTopbar = ({ onItemClick }: { onItemClick?: () => void }) => {
     const { toggleSidebar } = useSidebar();
     const { isInstallable, promptInstall } = usePWAInstall();
 
-    const { setLoading } = useLoading();
     const router = useRouter();
 
 
@@ -26,7 +24,6 @@ export const MobileTopbar = ({ onItemClick }: { onItemClick?: () => void }) => {
     const headingColor = useColorModeValue('brand.500', 'brand.300'); // Use a lighter brand color in dark mode for contrast
 
     const handleItemClick = (href: string) => {
-        setLoading(true);
         router.push(href);
         onItemClick?.();
     };

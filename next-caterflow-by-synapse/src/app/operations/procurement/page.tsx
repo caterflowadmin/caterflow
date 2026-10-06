@@ -1,5 +1,6 @@
 // src/app/operations/procurement/page.tsx
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
@@ -317,7 +318,7 @@ export default function ProcurementPage() {
 
   const fetchSuppliers = useCallback(async () => {
     try {
-      const res = await fetch("/api/suppliers");
+      const res = await cachedFetch("/api/suppliers");
       if (!res.ok) throw new Error("Failed to fetch suppliers");
       const data = await res.json();
       setSuppliers(data);

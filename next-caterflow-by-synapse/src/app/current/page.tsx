@@ -1,5 +1,7 @@
 // src/app/current/page.tsx
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
+import { logger } from '@/lib/logger';
 
 import { useState, useEffect, useRef, useCallback } from "react";
 
@@ -280,7 +282,7 @@ export default function CurrentStockPage() {
       const startTime = Date.now();
 
       try {
-        console.log(
+        logger.debug(
           "🚀 Loading stock from registry for site:",
           siteId || "All sites",
           forceRecalc ? "(forced)" : "",
@@ -290,7 +292,7 @@ export default function CurrentStockPage() {
         setProgress({ stage: "Fetching items and bins...", percentage: 10 });
 
         const [stockItemsResponse, binsResponse] = await Promise.all([
-          fetch("/api/stock-items"),
+          cachedFetch("/api/stock-items"),
           fetch(siteId ? `/api/bins?siteId=${siteId}` : "/api/bins"),
         ]);
 
@@ -301,19 +303,19 @@ export default function CurrentStockPage() {
         const stockItems: any[] = await stockItemsResponse.json();
         const bins: any[] = await binsResponse.json();
 
-        console.log("🔍 DEBUG - Bins fetched:", {
+        logger.debug("🔍 DEBUG - Bins fetched:", {
           count: bins.length,
           binIds: bins.map((b) => b._id),
           binNames: bins.map((b) => b.name),
         });
 
-        console.log("🔍 DEBUG - Stock items fetched:", {
+        logger.debug("🔍 DEBUG - Stock items fetched:", {
           count: stockItems.length,
           itemIds: stockItems.slice(0, 5).map((i) => i._id),
         });
 
         if (stockItems.length === 0 || bins.length === 0) {
-          console.log("⚠️ No items or bins found");
+          logger.debug("⚠️ No items or bins found");
           setCurrentStockItems([]);
           setIsLoading(false);
           setIsRefreshing(false);
@@ -323,17 +325,17 @@ export default function CurrentStockPage() {
         const stockItemIds = stockItems.map((item) => item._id);
         const binIds = bins.map((bin) => bin._id);
 
-        console.log(
+        logger.debug(
           `📊 Processing: ${stockItems.length} items × ${bins.length} bins = ${stockItemIds.length * binIds.length} combinations`,
         );
 
         // 2. Get ALL stock from registry in one or more calls
         setProgress({ stage: "Loading from registry...", percentage: 30 });
-        console.log("📊 Fetching stock from registry...");
+        logger.debug("📊 Fetching stock from registry...");
 
         const registryData = await fetchRegistrySnapshots(stockItemIds, binIds);
 
-        console.log("📋 Registry response:", {
+        logger.debug("📋 Registry response:", {
           total: registryData.totalCount,
           found: registryData.existingSnapshots,
           missing: registryData.missingCount,
@@ -349,7 +351,7 @@ export default function CurrentStockPage() {
         let fromCacheCount = registryData.existingSnapshots;
 
         if (forceRecalc || registryData.missingCount > 0) {
-          console.log(
+          logger.debug(
             `🔍 ${registryData.missingCount} items missing from registry, calculating...`,
           );
 
@@ -368,7 +370,7 @@ export default function CurrentStockPage() {
             }
           }
 
-          console.log(
+          logger.debug(
             `🔍 True missing pairs: ${missingPairs.length} (was ${registryData.missingCount})`,
           );
 
@@ -412,13 +414,13 @@ export default function CurrentStockPage() {
             }
           }
         } else {
-          console.log("✅ All items found in registry");
+          logger.debug("✅ All items found in registry");
         }
 
         setProgress({ stage: "Processing results...", percentage: 90 });
 
         // 4. PROCESS RESULTS
-        console.log("📊 Processing final results...");
+        logger.debug("📊 Processing final results...");
         const itemsWithCalculatedStock: CurrentStockItem[] = [];
 
         // Create site map for lookups
@@ -502,7 +504,7 @@ export default function CurrentStockPage() {
           isClosable: true,
         });
 
-        console.log(
+        logger.debug(
           `✅ FINISHED: ${itemsWithCalculatedStock.length} items in ${duration}ms (${fromCacheCount} from registry, ${calculatedCount} calculated)`,
         );
       } catch (err: any) {
@@ -526,13 +528,13 @@ export default function CurrentStockPage() {
 
   const fetchSites = async () => {
     try {
-      console.log("🌐 Fetching sites...");
-      const response = await fetch("/api/sites");
+      logger.debug("🌐 Fetching sites...");
+      const response = await cachedFetch("/api/sites");
       if (!response.ok) {
         throw new Error("Failed to fetch sites");
       }
       const data = await response.json();
-      console.log("✅ Sites fetched:", data.length, "sites");
+      logger.debug("✅ Sites fetched:", data.length, "sites");
       setSites(data);
     } catch (err) {
       console.error("❌ Failed to fetch sites:", err);
@@ -540,12 +542,12 @@ export default function CurrentStockPage() {
   };
 
   const handleSiteClick = (siteId: string) => {
-    console.log("📍 Site selected:", siteId);
+    logger.debug("📍 Site selected:", siteId);
     setSelectedSiteId(siteId);
   };
 
   const handleRefresh = async (forceRecalc = false) => {
-    console.log("🔄 Manual refresh triggered", { forceRecalc });
+    logger.debug("🔄 Manual refresh triggered", { forceRecalc });
     setIsRefreshing(true);
 
     try {
@@ -595,7 +597,7 @@ export default function CurrentStockPage() {
         }, 1000);
       } else {
         // Your existing normal refresh logic
-        console.log("🔁 Normal refresh");
+        logger.debug("🔁 Normal refresh");
         // ... existing code ...
       }
     } catch (error: any) {
@@ -695,7 +697,7 @@ export default function CurrentStockPage() {
 
       // Recalculate if never done or older than 1 hour
       if (!lastCalculation || now - parseInt(lastCalculation) > 3600000) {
-        console.log("🔄 Auto-recalculating stock...");
+        logger.debug("🔄 Auto-recalculating stock...");
 
         // Show loading state
         setIsLoading(true);
@@ -779,7 +781,7 @@ export default function CurrentStockPage() {
       );
       if (binResponse.ok) {
         const binData = await binResponse.json();
-        console.log("📦 Available bins for item:", binData);
+        logger.debug("📦 Available bins for item:", binData);
 
         // If we have a specific binId, use it, otherwise use the first available
         const targetBinId =
@@ -800,7 +802,7 @@ export default function CurrentStockPage() {
         }
 
         const data = await response.json();
-        console.log("📊 Transaction history data:", data);
+        logger.debug("📊 Transaction history data:", data);
 
         if (data.success) {
           setTransactionHistory(data);
@@ -830,7 +832,7 @@ export default function CurrentStockPage() {
 
   // Add a handler for opening the calculations modal
   const handleOpenCalculations = async (item: CurrentStockItem) => {
-    console.log("🔍 DEBUG handleOpenCalculations:", {
+    logger.debug("🔍 DEBUG handleOpenCalculations:", {
       itemName: item.name,
       itemId: item._id,
       originalItemId: item._id.includes("-")
@@ -864,7 +866,7 @@ export default function CurrentStockPage() {
     setTransactionHistory(null);
 
     try {
-      console.log(`📊 Fetching calculation for ${originalItemId} in ${binId}`);
+      logger.debug(`📊 Fetching calculation for ${originalItemId} in ${binId}`);
 
       const response = await fetch(
         `/api/stock/transaction-history?stockItemId=${originalItemId}&binId=${binId}`,
@@ -879,7 +881,7 @@ export default function CurrentStockPage() {
       setTransactionHistory(data);
       onOpen();
 
-      console.log("✅ Calculation loaded:", {
+      logger.debug("✅ Calculation loaded:", {
         currentStock: data.currentStock,
         transactionCount: data.transactions?.length,
       });
@@ -1014,7 +1016,7 @@ export default function CurrentStockPage() {
   const fetchStockSnapshots = async () => {
     try {
       setIsLoading(true);
-      console.log("📊 Fetching stock snapshots...");
+      logger.debug("📊 Fetching stock snapshots...");
 
       // Get unique item and bin IDs from current items
       const uniqueItemIds = [
@@ -1048,7 +1050,7 @@ export default function CurrentStockPage() {
       setSnapshotData(data);
       setShowSnapshots(true);
 
-      console.log(`✅ Loaded ${data.length} snapshots`);
+      logger.debug(`✅ Loaded ${data.length} snapshots`);
     } catch (error) {
       console.error("Error fetching snapshots:", error);
       toast({

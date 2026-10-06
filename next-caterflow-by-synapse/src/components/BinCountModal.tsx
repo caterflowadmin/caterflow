@@ -1,3 +1,5 @@
+import { cachedFetch } from '@/lib/clientCache';
+import { logger } from '@/lib/logger';
 // src/components/BinCountModal.tsx
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
@@ -261,7 +263,7 @@ export default function BinCountModal({
         const data = await response.json();
 
         if (data.success && data.results) {
-          console.log(
+          logger.debug(
             `✅ Batch fetch successful: ${Object.keys(data.results).length} items`,
           );
           return data.results;
@@ -314,7 +316,7 @@ export default function BinCountModal({
       });
     }
 
-    console.log(
+    logger.debug(
       `✅ Fallback individual fetch complete: ${Object.keys(results).length} items`,
     );
     return results;
@@ -478,15 +480,15 @@ export default function BinCountModal({
     setLoading(true);
     try {
       // Changed from /api/procurement/stock-items to /api/stock-items for accurate unitPrice
-      const response = await fetch("/api/stock-items");
+      const response = await cachedFetch("/api/stock-items");
       if (!response.ok) throw new Error("Failed to fetch stock items");
 
       const allStockItems: StockItemForSelector[] = await response.json();
 
       // LOG 1: Raw API Response
-      console.log("📥 Raw API Response from /api/stock-items:", allStockItems);
-      console.log("🔍 First item structure:", allStockItems[0]);
-      console.log(`ℹ️ Total items received: ${allStockItems.length}`);
+      logger.debug("📥 Raw API Response from /api/stock-items:", allStockItems);
+      logger.debug("🔍 First item structure:", allStockItems[0]);
+      logger.debug(`ℹ️ Total items received: ${allStockItems.length}`);
 
       if (allStockItems.length === 0) {
         toast({
@@ -522,10 +524,10 @@ export default function BinCountModal({
           pricesFromReceipts[item._id] == null && item.unitPrice == null;
 
         // LOG 2: Each item's unit price
-        console.log(`📦 Item: ${item.name} (SKU: ${item.sku})`);
-        console.log(`   Price from receipts: ${pricesFromReceipts[item._id]}`);
-        console.log(`   Price from item: ${item.unitPrice}`);
-        console.log(`   Final unitPrice: ${unitPrice}`);
+        logger.debug(`📦 Item: ${item.name} (SKU: ${item.sku})`);
+        logger.debug(`   Price from receipts: ${pricesFromReceipts[item._id]}`);
+        logger.debug(`   Price from item: ${item.unitPrice}`);
+        logger.debug(`   Final unitPrice: ${unitPrice}`);
 
         return {
           _key: nanoid(),
@@ -545,10 +547,10 @@ export default function BinCountModal({
       });
 
       // LOG 3: Final processed items
-      console.log("✅ Final itemsWithQuantities array:", itemsWithQuantities);
-      console.log("💰 Sample - First 3 items with prices:");
+      logger.debug("✅ Final itemsWithQuantities array:", itemsWithQuantities);
+      logger.debug("💰 Sample - First 3 items with prices:");
       itemsWithQuantities.slice(0, 3).forEach((item, idx) => {
-        console.log(
+        logger.debug(
           `  [${idx}] ${item.stockItem.name} - unitPrice: ${item.unitPrice}`,
         );
       });
@@ -617,11 +619,11 @@ export default function BinCountModal({
 
     setIsProcessing(true);
     try {
-      const response = await fetch("/api/bin-counts");
-      if (!response.ok) throw new Error("Failed to fetch bin counts");
+      // Fetch just the one count (this used to download every bin count ever recorded).
+      const response = await fetch(`/api/bin-counts/${encodeURIComponent(countId)}`);
+      if (response.status !== 404 && !response.ok) throw new Error("Failed to fetch bin count");
 
-      const allCounts = await response.json();
-      const brokenCount = allCounts.find((count: any) => count._id === countId);
+      const brokenCount = response.ok ? await response.json() : null;
 
       if (!brokenCount) {
         toast({
@@ -735,8 +737,8 @@ export default function BinCountModal({
 
     try {
       // LOG 4: Manual selection - raw items
-      console.log("📋 Manual selection - Items selected from modal:", newItems);
-      console.log("🔍 First selected item:", newItems[0]);
+      logger.debug("📋 Manual selection - Items selected from modal:", newItems);
+      logger.debug("🔍 First selected item:", newItems[0]);
 
       const newItemIds = newItems.map((item) => item._id);
 
@@ -764,13 +766,13 @@ export default function BinCountModal({
           pricesFromReceipts[item._id] == null && item.unitPrice == null;
 
         // LOG 5: Each manually selected item's unit price
-        console.log(
+        logger.debug(
           `📦 Manual selection - Item: ${item.name} (SKU: ${item.sku})`,
         );
-        console.log(`   Price from receipts: ${pricesFromReceipts[item._id]}`);
-        console.log(`   Price from item: ${item.unitPrice}`);
-        console.log(`   Final unitPrice: ${unitPrice}`);
-        console.log(`   Has missing price: ${hasMissingPrice}`);
+        logger.debug(`   Price from receipts: ${pricesFromReceipts[item._id]}`);
+        logger.debug(`   Price from item: ${item.unitPrice}`);
+        logger.debug(`   Final unitPrice: ${unitPrice}`);
+        logger.debug(`   Has missing price: ${hasMissingPrice}`);
 
         return {
           _key: nanoid(),
@@ -790,13 +792,13 @@ export default function BinCountModal({
       });
 
       // LOG 6: Final processed items from manual selection
-      console.log(
+      logger.debug(
         "✅ Items after manual selection processing:",
         itemsWithQuantities,
       );
-      console.log("💰 Sample prices from manual selection:");
+      logger.debug("💰 Sample prices from manual selection:");
       itemsWithQuantities.forEach((item) => {
-        console.log(`  ${item.stockItem.name}: unitPrice=${item.unitPrice}`);
+        logger.debug(`  ${item.stockItem.name}: unitPrice=${item.unitPrice}`);
       });
 
       setCountedItems((prev) => [...prev, ...itemsWithQuantities]);
@@ -986,7 +988,7 @@ export default function BinCountModal({
       };
     });
 
-    console.log(`📦 Processing ${itemsWithVariance.length} valid items`);
+    logger.debug(`📦 Processing ${itemsWithVariance.length} valid items`);
 
     let status;
     if (isFinalize) {
@@ -1022,7 +1024,7 @@ export default function BinCountModal({
       payload._id = binCount._id;
     }
 
-    console.log("📤 Sending payload with", itemsWithVariance.length, "items");
+    logger.debug("📤 Sending payload with", itemsWithVariance.length, "items");
 
     try {
       const method = binCount ? "PUT" : "POST";
@@ -1034,7 +1036,7 @@ export default function BinCountModal({
         body: JSON.stringify(payload),
       });
 
-      console.log("📥 Response status:", response.status);
+      logger.debug("📥 Response status:", response.status);
 
       if (!response.ok) {
         let errorData;
@@ -1060,7 +1062,7 @@ export default function BinCountModal({
       }
 
       const result = await response.json();
-      console.log("✅ Save successful:", result);
+      logger.debug("✅ Save successful:", result);
 
       toast({
         title: `Count ${isFinalize ? "Finalized" : "Saved"}`,

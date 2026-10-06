@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchRecentThenArchive } from '@/lib/fetchRecentThenArchive';
+import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Box,
@@ -132,14 +134,10 @@ export default function BinCountsPage() {
   const fetchBinCounts = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/bin-counts");
-      if (response.ok) {
-        const data = await response.json();
-        console.log("API response data:", data);
-        setBinCounts(data);
-      } else {
-        throw new Error("Failed to fetch bin counts");
-      }
+      await fetchRecentThenArchive<any>("/api/bin-counts", {
+        dateField: "countDate",
+        onData: (data) => setBinCounts(data),
+      });
     } catch (error) {
       console.error("Error fetching bin counts:", error);
       toast({

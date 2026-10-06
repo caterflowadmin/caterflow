@@ -1,5 +1,6 @@
 "use client";
 
+import { logger } from '@/lib/logger';
 import React, { useState, useEffect } from "react";
 import {
   Modal,
@@ -61,7 +62,7 @@ const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
       // Handle the site selection - data comes in different formats
       if (userToEdit.associatedSite) {
-        console.log("userToEdit.associatedSite:", userToEdit.associatedSite);
+        logger.debug("userToEdit.associatedSite:", userToEdit.associatedSite);
 
         // Check if it's an expanded site object (from API)
         if (typeof userToEdit.associatedSite === "object") {

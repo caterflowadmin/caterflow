@@ -1,3 +1,5 @@
+import { logger } from '@/lib/logger';
+import { clearStockCache } from '@/lib/cache';
 // /api/stock/emergency-recalculate/route.ts
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -15,7 +17,7 @@ export async function POST(request: Request) {
 			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 		}
 
-		console.log('🚨 Starting emergency stock recalculation via API...');
+		logger.debug('🚨 Starting emergency stock recalculation via API...');
 
 		// 1. Clear existing stock registry
 		const existingRegistry = await client.fetch(groq`*[_type == "stockRegistry"][0] { _id }`);
@@ -29,7 +31,7 @@ export async function POST(request: Request) {
 					version: (existingRegistry.version || 0) + 1
 				})
 				.commit();
-			console.log('✅ Cleared existing stock registry');
+			logger.debug('✅ Cleared existing stock registry');
 		} else {
 			await writeClient.create({
 				_type: 'stockRegistry',
@@ -38,7 +40,7 @@ export async function POST(request: Request) {
 				lastUpdated: new Date().toISOString(),
 				version: 1
 			});
-			console.log('✅ Created new empty stock registry');
+			logger.debug('✅ Created new empty stock registry');
 		}
 
 		// 2. Reset BinStock quantities
@@ -49,7 +51,7 @@ export async function POST(request: Request) {
 			.commit();
 
 		// 3. Process all completed goods receipts using REGISTRY updates
-		console.log('📦 Collecting all goods receipt items for bulk processing...');
+		logger.debug('📦 Collecting all goods receipt items for bulk processing...');
 		const receipts = await client.fetch(`
 				*[_type == "GoodsReceipt" && status == "completed"] {
 					_id,
@@ -82,23 +84,23 @@ export async function POST(request: Request) {
 			}
 		}
 
-		console.log(`🚀 Bulk processing ${bulkUpdates.length} items from ${receipts.length} receipts...`);
+		logger.debug(`🚀 Bulk processing ${bulkUpdates.length} items from ${receipts.length} receipts...`);
 
 		// Use REGISTRY bulk update for maximum efficiency
 		if (bulkUpdates.length > 0) {
 			const bulkResult = await bulkUpdateStockRegistry(bulkUpdates, {
 				onProgress: (progress) => {
 					if (progress.processed % 50 === 0 || progress.processed === progress.total) {
-						console.log(`📈 Emergency recalculation: ${progress.processed}/${progress.total} items`);
+						logger.debug(`📈 Emergency recalculation: ${progress.processed}/${progress.total} items`);
 					}
 				}
 			});
 
-			console.log(`✅ Emergency registry update: ${bulkResult.success} succeeded, ${bulkResult.failed} failed`);
+			logger.debug(`✅ Emergency registry update: ${bulkResult.success} succeeded, ${bulkResult.failed} failed`);
 		}
 
 		// Still process BinStock separately if needed (for backward compatibility)
-		console.log('🔄 Updating BinStock quantities...');
+		logger.debug('🔄 Updating BinStock quantities...');
 		for (const receipt of receipts) {
 			for (const item of receipt.receivedItems) {
 				if (item.stockItem && item.receivedQuantity > 0 && receipt.receivingBin) {
@@ -131,6 +133,7 @@ export async function POST(request: Request) {
 
 		const receiptsProcessed = receipts.length;
 
+		clearStockCache(); // registry changed: drop the parsed-registry cache
 		return NextResponse.json({
 			success: true,
 			message: 'Emergency recalculation complete',

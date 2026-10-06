@@ -1,3 +1,5 @@
+import { cachedLookup } from '@/lib/lookupCache';
+import { withInvalidation } from '@/lib/lookupCache';
 // src/app/api/dispatch-types/route.ts (REPLACE ENTIRE FILE)
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -27,7 +29,7 @@ export async function GET() {
             isActive
         }`;
 
-        const dispatchTypes = await client.fetch(query);
+        const dispatchTypes = await cachedLookup('dispatch-types', [], () => client.fetch(query), 120);
         return NextResponse.json(dispatchTypes);
     } catch (error) {
         console.error('Failed to fetch dispatch types:', error);
@@ -36,7 +38,7 @@ export async function GET() {
 }
 
 // POST create new dispatch type
-export async function POST(request: Request) {
+async function _POST(request: Request) {
     try {
         const session = await getServerSession(authOptions);
 
@@ -81,3 +83,5 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Failed to create dispatch type' }, { status: 500 });
     }
 }
+
+export const POST = withInvalidation(_POST, ['dispatch-types']);

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/complete-goods-receipt/route.ts
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
 
         const { receiptId, poId, attachmentIds } = await request.json();
 
-        console.log("🔧 Complete goods receipt request:", {
+        logger.debug("🔧 Complete goods receipt request:", {
             receiptId,
             poId,
             attachmentCount: attachmentIds?.length || 0
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
         }
 
         // CRITICAL: Validate that all items with quantity have receiving bins
-        console.log('🔍 Validating receipt items have bins...');
+        logger.debug('🔍 Validating receipt items have bins...');
         const validationQuery = groq`*[_type == "GoodsReceipt" && _id == $receiptId][0] {
             receiptNumber,
             status,
@@ -121,7 +122,7 @@ export async function POST(request: Request) {
             }, { status: 400 });
         }
 
-        console.log(`✅ Validation passed: All items with quantity have bins`);
+        logger.debug(`✅ Validation passed: All items with quantity have bins`);
 
         // Start a transaction
         const transaction = writeClient.transaction();
@@ -145,7 +146,7 @@ export async function POST(request: Request) {
 
         // 3. Add attachments to receipt if provided
         if (attachmentIds && attachmentIds.length > 0) {
-            console.log(`📎 Adding ${attachmentIds.length} attachments to receipt`);
+            logger.debug(`📎 Adding ${attachmentIds.length} attachments to receipt`);
 
             // First check if the attachments already exist in the receipt
             const currentReceipt = await writeClient.fetch(
@@ -170,14 +171,14 @@ export async function POST(request: Request) {
                 transaction.patch(receiptId, (patch) =>
                     patch.append('attachments', newAttachments)
                 );
-                console.log(`✅ Added ${newAttachments.length} new attachments`);
+                logger.debug(`✅ Added ${newAttachments.length} new attachments`);
             }
         }
 
         // Execute the transaction
-        console.log('💾 Executing transaction...');
+        logger.debug('💾 Executing transaction...');
         const result = await transaction.commit();
-        console.log('✅ Transaction completed');
+        logger.debug('✅ Transaction completed');
 
 
 
@@ -185,10 +186,10 @@ export async function POST(request: Request) {
         await updateEvidenceStatus(receiptId, attachmentIds);
 
         // Update stock after transaction (for procurement)
-        console.log('🔄 Updating stock snapshots for procurement...');
+        logger.debug('🔄 Updating stock snapshots for procurement...');
         try {
             await updateStockForTransaction('procurement', receiptId);
-            console.log('✅ Stock snapshots updated');
+            logger.debug('✅ Stock snapshots updated');
         } catch (stockError: any) {
             console.error('❌ Failed to update stock:', stockError);
             // Don't fail the whole request if stock update fails
@@ -254,7 +255,7 @@ async function updateEvidenceStatus(receiptId: string, attachmentIds: string[] =
             evidenceStatus = 'partial';
         }
 
-        console.log('📊 Evidence status calculation:', {
+        logger.debug('📊 Evidence status calculation:', {
             hasAttachments,
             hasNotes,
             allItemsHaveBins,
@@ -267,7 +268,7 @@ async function updateEvidenceStatus(receiptId: string, attachmentIds: string[] =
             .set({ evidenceStatus })
             .commit();
 
-        console.log(`✅ Evidence status updated to: ${evidenceStatus}`);
+        logger.debug(`✅ Evidence status updated to: ${evidenceStatus}`);
     } catch (error) {
         console.error('❌ Error updating evidence status:', error);
     }

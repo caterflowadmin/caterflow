@@ -16,6 +16,7 @@ jest.mock("@/lib/reportAnchors", () => ({
 jest.mock("next-auth", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth", () => ({ authOptions: {} }));
 
+import { resetLedgerCache } from "@/lib/ledgerCache";
 import { GET as financialsGET } from "@/app/api/reports/financials/route";
 import { GET as closeGET, POST as closePOST } from "@/app/api/reports/period-close/route";
 import { getUserSiteInfo } from "@/lib/siteFiltering";
@@ -34,6 +35,7 @@ const req = (url: string, init?: any) => new Request(`http://x${url}`, init);
 
 beforeEach(() => {
   jest.clearAllMocks();
+  resetLedgerCache(); // the route caches ledger loads for 45s
   (getUserSiteInfo as jest.Mock).mockResolvedValue(admin);
   (loadLedgerDocs as jest.Mock).mockResolvedValue(docs());
   (getLatestAnchor as jest.Mock).mockResolvedValue(null);

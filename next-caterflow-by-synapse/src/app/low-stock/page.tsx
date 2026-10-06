@@ -1,5 +1,7 @@
 // src/app/low-stock/page.tsx
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
+import { logger } from '@/lib/logger';
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
@@ -160,23 +162,23 @@ export default function LowStockPage() {
       const startTime = Date.now();
 
       try {
-        console.log(
+        logger.debug(
           "🔄 Starting low stock calculation for site:",
           siteId || "All sites",
         );
 
         // Fetch all stock items
         setProgress({ stage: "Fetching stock items...", percentage: 10 });
-        console.log("📦 Fetching all stock items...");
-        const stockItemsResponse = await fetch("/api/stock-items");
+        logger.debug("📦 Fetching all stock items...");
+        const stockItemsResponse = await cachedFetch("/api/stock-items");
         if (!stockItemsResponse.ok) {
           throw new Error("Failed to fetch stock items");
         }
         const stockItems: any[] = await stockItemsResponse.json();
-        console.log("✅ Stock items fetched:", stockItems.length, "items");
+        logger.debug("✅ Stock items fetched:", stockItems.length, "items");
 
         if (stockItems.length === 0) {
-          console.log("⚠️ No stock items found");
+          logger.debug("⚠️ No stock items found");
           setLowStockItems([]);
           setIsLoading(false);
           setIsRefreshing(false);
@@ -188,17 +190,17 @@ export default function LowStockPage() {
         const binsEndpoint = siteId
           ? `/api/bins?siteId=${siteId}`
           : "/api/bins";
-        console.log("🗄️ Fetching bins from:", binsEndpoint);
+        logger.debug("🗄️ Fetching bins from:", binsEndpoint);
         const binsResponse = await fetch(binsEndpoint);
         if (!binsResponse.ok) {
           throw new Error("Failed to fetch bins");
         }
         const bins = await binsResponse.json();
         const binIds = bins.map((bin: any) => bin._id);
-        console.log("✅ Bins fetched:", bins.length, "bins, IDs:", binIds);
+        logger.debug("✅ Bins fetched:", bins.length, "bins, IDs:", binIds);
 
         if (binIds.length === 0) {
-          console.log("⚠️ No bins found for site:", siteId);
+          logger.debug("⚠️ No bins found for site:", siteId);
           setLowStockItems([]);
           setIsLoading(false);
           setIsRefreshing(false);
@@ -207,7 +209,7 @@ export default function LowStockPage() {
 
         // Get all stock item IDs
         const stockItemIds = stockItems.map((item) => item._id);
-        console.log(
+        logger.debug(
           "🔢 Calculating stock for",
           stockItemIds.length,
           "items across",
@@ -217,7 +219,7 @@ export default function LowStockPage() {
 
         // Calculate current stock for all items in all bins with progress tracking
         setProgress({ stage: "Calculating current stock...", percentage: 30 });
-        console.log("🧮 Starting bulk stock calculation...");
+        logger.debug("🧮 Starting bulk stock calculation...");
 
         const stockResults = await calculateBulkStock(
           stockItemIds,
@@ -227,7 +229,7 @@ export default function LowStockPage() {
           },
         );
 
-        console.log(
+        logger.debug(
           "✅ Bulk stock calculation complete. Results:",
           Object.keys(stockResults).length,
           "item-bin pairs",
@@ -235,7 +237,7 @@ export default function LowStockPage() {
 
         // Process results and create LOW STOCK items grouped by site
         setProgress({ stage: "Processing results...", percentage: 80 });
-        console.log(
+        logger.debug(
           "📊 Processing results and creating low stock items grouped by site...",
         );
         const itemsWithCalculatedStock: LowStockItem[] = [];
@@ -378,7 +380,7 @@ export default function LowStockPage() {
           fromCache: 0, // Could be enhanced to track actual cache hits
         });
 
-        console.log(
+        logger.debug(
           "✅ Low stock calculation complete. Low stock items found:",
           itemsWithCalculatedStock.length,
         );
@@ -406,7 +408,7 @@ export default function LowStockPage() {
         setProgress({ stage: "Complete", percentage: 100 });
         setIsLoading(false);
         setIsRefreshing(false);
-        console.log("🏁 Low stock calculation finished");
+        logger.debug("🏁 Low stock calculation finished");
       }
     },
     [toast],
@@ -415,7 +417,7 @@ export default function LowStockPage() {
   const fetchSuppliers = async () => {
     try {
       setProgress({ stage: "Fetching suppliers...", percentage: 0 });
-      const response = await fetch("/api/suppliers");
+      const response = await cachedFetch("/api/suppliers");
       if (!response.ok) {
         throw new Error("Failed to fetch suppliers");
       }
@@ -428,13 +430,13 @@ export default function LowStockPage() {
 
   const fetchSites = async () => {
     try {
-      console.log("🌐 Fetching sites...");
-      const response = await fetch("/api/sites");
+      logger.debug("🌐 Fetching sites...");
+      const response = await cachedFetch("/api/sites");
       if (!response.ok) {
         throw new Error("Failed to fetch sites");
       }
       const data = await response.json();
-      console.log("✅ Sites fetched:", data.length, "sites");
+      logger.debug("✅ Sites fetched:", data.length, "sites");
       setSites(data);
     } catch (err) {
       console.error("❌ Failed to fetch sites:", err);
@@ -503,7 +505,7 @@ export default function LowStockPage() {
   }, [sites]);
 
   const handleSiteClick = (siteId: string) => {
-    console.log("📍 Site selected:", siteId);
+    logger.debug("📍 Site selected:", siteId);
     setSelectedSiteId(siteId);
   };
 
@@ -520,7 +522,7 @@ export default function LowStockPage() {
   };
 
   const handleRefresh = async () => {
-    console.log("🔄 Manual refresh triggered");
+    logger.debug("🔄 Manual refresh triggered");
     setIsRefreshing(true);
 
     // Make sure sites are loaded before calculating

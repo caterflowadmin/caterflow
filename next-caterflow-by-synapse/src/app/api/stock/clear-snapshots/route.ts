@@ -1,3 +1,5 @@
+import { logger } from '@/lib/logger';
+import { clearStockCache } from '@/lib/cache';
 // src/app/api/stock/clear-snapshots/route.ts
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -5,7 +7,7 @@ import { groq } from 'next-sanity';
 
 export async function POST(request: Request) {
 	try {
-		console.log('🧹 Starting stock snapshots clearance...');
+		logger.debug('🧹 Starting stock snapshots clearance...');
 
 		// 1. Fetch all old StockSnapshot documents
 		const snapshots = await client.fetch(`
@@ -16,7 +18,7 @@ export async function POST(request: Request) {
             }
         `);
 
-		console.log(`📊 Found ${snapshots.length} old stock snapshots to clear`);
+		logger.debug(`📊 Found ${snapshots.length} old stock snapshots to clear`);
 
 		// 2. Delete all old snapshots if any exist
 		if (snapshots.length > 0) {
@@ -28,7 +30,7 @@ export async function POST(request: Request) {
 			});
 
 			await transaction.commit();
-			console.log(`✅ Deleted ${snapshots.length} old stock snapshots`);
+			logger.debug(`✅ Deleted ${snapshots.length} old stock snapshots`);
 		}
 
 		// 3. Create empty stock registry if it doesn't exist
@@ -42,11 +44,12 @@ export async function POST(request: Request) {
 				lastUpdated: new Date().toISOString(),
 				version: 1
 			});
-			console.log('✅ Created new empty stock registry');
+			logger.debug('✅ Created new empty stock registry');
 		} else {
-			console.log('✅ Stock registry already exists');
+			logger.debug('✅ Stock registry already exists');
 		}
 
+		clearStockCache(); // registry changed: drop the parsed-registry cache
 		return NextResponse.json({
 			success: true,
 			message: `Successfully cleared ${snapshots.length} old stock snapshots and ensured registry exists`,

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/stock-snapshots/initialize/route.ts
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -5,7 +6,7 @@ import { groq } from 'next-sanity';
 
 export async function POST(request: Request) {
 	try {
-		console.log('🏁 Initializing stock snapshots via API...');
+		logger.debug('🏁 Initializing stock snapshots via API...');
 
 		// Get all stock items and bins
 		const [stockItems, bins] = await Promise.all([
@@ -16,7 +17,7 @@ export async function POST(request: Request) {
 		const stockItemIds = stockItems.map((item: any) => item._id);
 		const binIds = bins.map((bin: any) => bin._id);
 
-		console.log(`📊 Found ${stockItems.length} stock items and ${bins.length} bins`);
+		logger.debug(`📊 Found ${stockItems.length} stock items and ${bins.length} bins`);
 
 		let successCount = 0;
 		let errorCount = 0;
@@ -70,7 +71,7 @@ export async function POST(request: Request) {
 					successCount++;
 
 					if (successCount % 50 === 0) {
-						console.log(`  Created ${successCount} snapshots...`);
+						logger.debug(`  Created ${successCount} snapshots...`);
 					}
 				} catch (error: any) {
 					errorCount++;
@@ -80,7 +81,7 @@ export async function POST(request: Request) {
 			}
 		}
 
-		console.log(`✅ Initialization complete: ${successCount} created, ${errorCount} errors`);
+		logger.debug(`✅ Initialization complete: ${successCount} created, ${errorCount} errors`);
 
 		return NextResponse.json({
 			success: true,
@@ -109,7 +110,7 @@ export async function POST(request: Request) {
 // Calculate stock from transactions (for initial snapshot or validation)
 const calculateStockFromTransactions = async (stockItemId: string, binId: string): Promise<number> => {
 	try {
-		console.log(`🧮 Calculating stock for ${stockItemId} in ${binId} from transactions`);
+		logger.debug(`🧮 Calculating stock for ${stockItemId} in ${binId} from transactions`);
 
 		const query = groq`{
       "goodsReceipts": *[

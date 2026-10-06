@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/operations/transfers/route.ts
 
 import { NextResponse } from 'next/server';
@@ -305,7 +306,7 @@ export async function PATCH(request: Request) {
         /*/ In PATCH function, add revert logic:
         const wasCompleted = currentTransfer?.status === 'completed';
         if (wasCompleted && (body.transferredItems || body.fromBin || body.toBin)) {
-            console.log('↩️ Reverting previous stock changes for transfer edit');
+            logger.debug('↩️ Reverting previous stock changes for transfer edit');
             await revertPreviousStockChanges(currentTransfer.id);
         }*/
 

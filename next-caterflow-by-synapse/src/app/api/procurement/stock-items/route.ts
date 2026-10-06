@@ -1,3 +1,4 @@
+import { withInvalidation } from '@/lib/lookupCache';
 // src/app/api/procurement/stock-items/route.ts
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -80,7 +81,7 @@ export async function GET(request: Request) {
     }
 }
 
-export async function PATCH(request: Request) {
+async function _PATCH(request: Request) {
     try {
         const body = await request.json();
         const { itemId, updates } = body || {};
@@ -194,3 +195,5 @@ export async function PATCH(request: Request) {
         );
     }
 }
+
+export const PATCH = withInvalidation(_PATCH, ['stock-items']);

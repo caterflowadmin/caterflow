@@ -267,3 +267,40 @@ describe("calculateStockExactLogic", () => {
     expect(result).toBe(15);
   });
 });
+
+// ---------------------------------------------------------------------------
+// calculateBulkStock: registry-backed reads + bounded backfill
+// ---------------------------------------------------------------------------
+import { calculateBulkStock } from "@/lib/stockCalculations";
+import { invalidateRegistryMap } from "@/lib/cache";
+
+describe("calculateBulkStock", () => {
+  beforeEach(() => invalidateRegistryMap());
+
+  it("serves known pairs from the registry without replaying transactions", async () => {
+    mockFetch.mockResolvedValue({
+      stockData: {
+        items: [{ stockItemId: "i1", binQuantities: { bins: [{ binId: "b1", quantity: 7 }] } }],
+      },
+    });
+    const res = await calculateBulkStock(["i1"], ["b1"]);
+    expect(res).toEqual({ "i1-b1": 7 });
+    expect(mockFetch).toHaveBeenCalledTimes(1); // just the registry
+  });
+
+  it("does not mutate the caller's id arrays", async () => {
+    mockFetch.mockResolvedValue({
+      stockData: { items: [{ stockItemId: "z", binQuantities: { bins: [{ binId: "b", quantity: 1 }] } }] },
+    });
+    const items = ["z", "a"];
+    const bins = ["b"];
+    await calculateBulkStock(items, bins);
+    expect(items).toEqual(["z", "a"]);
+  });
+
+  it("returns zeros (and never creates a registry) when the registry read fails", async () => {
+    mockFetch.mockRejectedValue(new Error("timeout"));
+    const res = await calculateBulkStock(["i1"], ["b1"]);
+    expect(res).toEqual({ "i1-b1": 0 });
+  });
+});

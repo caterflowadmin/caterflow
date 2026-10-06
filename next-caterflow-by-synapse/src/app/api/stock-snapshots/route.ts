@@ -1,3 +1,5 @@
+import { logger } from '@/lib/logger';
+import { clearStockCache } from '@/lib/cache';
 // src/app/api/stock/snapshots/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -14,7 +16,7 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
-		console.log('📝 Updating stock registry:', {
+		logger.debug('📝 Updating stock registry:', {
 			stockItemId,
 			binId,
 			quantity,
@@ -86,8 +88,9 @@ export async function POST(request: NextRequest) {
 			});
 		}
 
-		console.log(`✅ Updated registry for ${stockItemId}-${binId}: ${quantity}`);
+		logger.debug(`✅ Updated registry for ${stockItemId}-${binId}: ${quantity}`);
 
+		clearStockCache(); // registry changed: drop the parsed-registry cache
 		return NextResponse.json(
 			{
 				success: true,

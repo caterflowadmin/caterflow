@@ -1,5 +1,7 @@
 // src/components/DispatchModal.tsx (REPLACE ENTIRE FILE)
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
+import { logger } from '@/lib/logger';
 
 import React, { useState, useEffect } from "react";
 import {
@@ -293,9 +295,9 @@ export default function DispatchModal({
       setLoading(true);
       try {
         const [dispatchTypesRes, binsRes, sitesRes] = await Promise.all([
-          fetch("/api/dispatch-types"),
-          fetch("/api/bins"),
-          fetch("/api/sites"),
+          cachedFetch("/api/dispatch-types"),
+          cachedFetch("/api/bins"),
+          cachedFetch("/api/sites"),
         ]);
 
         if (!dispatchTypesRes.ok)
@@ -394,7 +396,7 @@ export default function DispatchModal({
           }
         } catch (error: any) {
           if (error.name === "AbortError") return;
-          console.log("Error setting default site:", error);
+          logger.debug("Error setting default site:", error);
         } finally {
           if (mounted) setLoading(false);
         }

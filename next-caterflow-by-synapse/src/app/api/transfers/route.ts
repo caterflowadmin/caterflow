@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
 import { groq } from 'next-sanity';
@@ -216,7 +217,7 @@ export async function PATCH(request: Request) {
         const willBeCompleted = updateData.status === 'completed' || (!updateData.status && wasCompleted);
 
         /*        if (wasCompleted && (updateData.transferredItems || updateData.fromBin || updateData.toBin)) {
-                    console.log('↩️ Reverting previous stock changes for transfer edit');
+                    logger.debug('↩️ Reverting previous stock changes for transfer edit');
                     await revertPreviousStockChanges(_id);
                 }*/
 

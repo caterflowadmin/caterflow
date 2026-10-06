@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/bin-counts/route.ts
 import { NextResponse } from "next/server";
 import { client, writeClient } from "@/lib/sanity";
@@ -27,14 +28,17 @@ const getCurrentStockForItem = async (
   }
 };
 
-export async function GET() {
+export async function GET(request: Request) {
+  // ?archived=false skips the (unbounded) MongoDB archive merge for fast operational lists.
+  const includeArchived = new URL(request.url).searchParams.get('archived') !== 'false';
+  const onlyArchived = new URL(request.url).searchParams.get('archived') === 'only';
   try {
-    console.log("🔍 Starting bin counts fetch...");
+    logger.debug("🔍 Starting bin counts fetch...");
     const userSiteInfo = await getUserSiteInfo();
-    console.log("👤 User site info:", userSiteInfo);
+    logger.debug("👤 User site info:", userSiteInfo);
 
     const siteFilter = buildBinSiteFilter(userSiteInfo);
-    console.log("🎯 Site filter:", siteFilter);
+    logger.debug("🎯 Site filter:", siteFilter);
 
     // Fixed GROQ query with proper field paths
     const query = groq`*[_type == "InventoryCount" ${siteFilter}] | order(countDate desc) {
@@ -78,9 +82,9 @@ export async function GET() {
             }
         }`;
 
-    console.log("📊 Executing GROQ query...");
-    const binCounts = await client.fetch(query);
-    console.log("✅ Found bin counts:", binCounts?.length || 0);
+    logger.debug("📊 Executing GROQ query...");
+    const binCounts = onlyArchived ? [] : await client.fetch(query);
+    logger.debug("✅ Found bin counts:", binCounts?.length || 0);
 
     const countsWithTotals = binCounts.map((count: any) => {
       const totalItems = count.countedItems?.length || 0;
@@ -119,7 +123,7 @@ export async function GET() {
 
     // ── Fetch archived bin counts from MongoDB ──
     let archivedCounts: any[] = [];
-    try {
+    if (includeArchived) try {
         const raw = await getArchivedBinCounts({
             userSiteId: userSiteInfo.userSiteId,
             canAccessMultipleSites: userSiteInfo.canAccessMultipleSites,
@@ -139,7 +143,7 @@ export async function GET() {
         (a, b) => new Date(b.countDate).getTime() - new Date(a.countDate).getTime()
     );
 
-    console.log("📦 Returning counts with totals");
+    logger.debug("📦 Returning counts with totals");
     return NextResponse.json(merged);
   } catch (error) {
     console.error("❌ Failed to fetch bin counts:", error);
@@ -236,7 +240,7 @@ export async function PUT(request: Request) {
     let countedItems;
     if (updateData.countedItems) {
       countedItems = updateData.countedItems.map((item: any) => {
-        console.log("Processing counted item for PUT:", item);
+        logger.debug("Processing counted item for PUT:", item);
         return {
           _type: "CountedItem",
           _key: item._key,
@@ -294,7 +298,7 @@ export async function PUT(request: Request) {
       updateData.status === "completed" || (!updateData.status && wasCompleted);
 
     /*        if (wasCompleted && (updateData.countedItems || updateData.bin)) {
-                    console.log('↩️ Reverting previous stock changes for count edit');
+                    logger.debug('↩️ Reverting previous stock changes for count edit');
                     await revertPreviousStockChanges(_id);
                 }
         */
@@ -326,13 +330,13 @@ export async function PUT(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    console.log("📝 Starting bin count creation...");
+    logger.debug("📝 Starting bin count creation...");
     const newBinCount = await request.json();
-    console.log("📦 Received payload:", JSON.stringify(newBinCount, null, 2));
+    logger.debug("📦 Received payload:", JSON.stringify(newBinCount, null, 2));
 
     // Use the count number generator
     const countNumber = await getNextBinCountNumber();
-    console.log("🔢 Generated count number:", countNumber);
+    logger.debug("🔢 Generated count number:", countNumber);
 
     // Validate that a bin is provided
     if (!newBinCount.bin) {
@@ -344,7 +348,7 @@ export async function POST(request: Request) {
     // In the POST function, update the countedItems processing:
     const countedItems =
       newBinCount.countedItems?.map((item: any, index: number) => {
-        console.log(`📊 Processing counted item ${index + 1}:`, item);
+        logger.debug(`📊 Processing counted item ${index + 1}:`, item);
 
         // Validate item structure
         if (!item.stockItem) {
@@ -389,16 +393,16 @@ export async function POST(request: Request) {
       totalVarianceCost: newBinCount.totalVarianceCost || 0, // ADD THIS
     };
 
-    console.log(`✅ Processed ${countedItems.length} counted items`);
+    logger.debug(`✅ Processed ${countedItems.length} counted items`);
 
-    console.log("📄 Creating document:", JSON.stringify(doc, null, 2));
+    logger.debug("📄 Creating document:", JSON.stringify(doc, null, 2));
 
     const result = await writeClient.create(doc);
-    console.log("✅ Bin count created:", result._id);
+    logger.debug("✅ Bin count created:", result._id);
 
     // Update stock calculations
     if (result.status === "completed") {
-      console.log("📊 Updating stock for completed count...");
+      logger.debug("📊 Updating stock for completed count...");
       await updateStockForTransaction("inventoryCount", result._id);
     }
 
@@ -411,7 +415,7 @@ export async function POST(request: Request) {
       true,
     );
 
-    console.log("🎉 Bin count creation complete");
+    logger.debug("🎉 Bin count creation complete");
     return NextResponse.json(result);
   } catch (error: any) {
     console.error("❌ Failed to create new bin count:", error);

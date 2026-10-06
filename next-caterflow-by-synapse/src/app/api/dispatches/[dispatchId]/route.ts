@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 // src/app/api/dispatches/[dispatchId]/route.ts (REPLACE ENTIRE FILE)
 import { NextResponse } from 'next/server';
 import { client, writeClient } from '@/lib/sanity';
@@ -295,7 +296,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ di
 
         // ✅ SYNC COMPLETION FIELDS WHEN COMPLETING
         if (willBeCompleted && !wasCompleted) {
-            console.log('🔄 Syncing completion fields for dispatch completion');
+            logger.debug('🔄 Syncing completion fields for dispatch completion');
             patch = patch.set({
                 evidenceStatus: 'complete',
                 status: 'completed'
@@ -436,7 +437,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ di
 
         // ✅ Update stock if dispatch is completed (ONLY HERE, not in validation)
         if (willBeCompleted && !wasCompleted) {
-            console.log('📦 Updating stock for completed dispatch:', result.dispatchNumber);
+            logger.debug('📦 Updating stock for completed dispatch:', result.dispatchNumber);
             await updateStockForTransaction('dispatch', dispatchId);
         }
 
