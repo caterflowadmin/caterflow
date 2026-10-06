@@ -12,7 +12,8 @@ import {
   previousRange,
 } from "@/lib/financialReport";
 import { parseDateRangeBoundary } from "@/lib/dateRangeUtils";
-import { loadLedgerDocs, loadLiveInventoryValue } from "@/lib/reportData";
+import { loadLiveInventoryValue } from "@/lib/reportData";
+import { loadLedgerCached } from "@/lib/ledgerCache";
 import { getLatestAnchor, toLedgerAnchor } from "@/lib/reportAnchors";
 import { canViewFinance } from "@/lib/reportAccess";
 
@@ -53,7 +54,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Invalid date range" }, { status: 400 });
   }
 
-  const docs = await loadLedgerDocs(siteId);
+  const docs = await loadLedgerCached(
+    info.canAccessMultipleSites ? "multi" : `site:${info.userSiteId}`,
+    siteId,
+  );
 
   let anchorDoc = null;
   let anchorUnavailable = false;

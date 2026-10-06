@@ -40,11 +40,19 @@ export function useArchiveStatus(pollMs: number | null = 60_000) {
     }
 
     fetchStatus();
+    // Don't poll while the tab is hidden; catch up as soon as it is visible again.
+    const poll = () => {
+      if (document.visibilityState === "visible") fetchStatus();
+    };
     let id: any = null;
-    if (pollMs) id = setInterval(fetchStatus, pollMs);
+    if (pollMs) {
+      id = setInterval(poll, pollMs);
+      document.addEventListener("visibilitychange", poll);
+    }
     return () => {
       mounted = false;
       if (id) clearInterval(id);
+      document.removeEventListener("visibilitychange", poll);
     };
   }, [pollMs]);
 

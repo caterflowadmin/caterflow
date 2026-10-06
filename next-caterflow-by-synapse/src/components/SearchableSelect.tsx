@@ -1,3 +1,4 @@
+import { cachedFetch } from '@/lib/clientCache';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Modal,
@@ -58,8 +59,8 @@ export default function StockItemSelectorModal({ isOpen, onClose, onSelect }: St
         setLoading(true);
         try {
             const [itemsResponse, categoriesResponse] = await Promise.all([
-                fetch('/api/stock-items'),
-                fetch('/api/categories')
+                cachedFetch('/api/stock-items'),
+                cachedFetch('/api/categories')
             ]);
 
             if (!itemsResponse.ok || !categoriesResponse.ok) {

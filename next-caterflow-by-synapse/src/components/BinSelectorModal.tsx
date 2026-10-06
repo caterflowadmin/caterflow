@@ -1,3 +1,4 @@
+import { cachedFetch } from '@/lib/clientCache';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Modal,
@@ -66,8 +67,8 @@ export default function BinSelectorModal({ isOpen, onClose, onSelect, selectedSi
         setLoading(true);
         try {
             const [binsRes, sitesRes] = await Promise.all([
-                fetch('/api/bins'),
-                fetch('/api/sites'),
+                cachedFetch('/api/bins'),
+                cachedFetch('/api/sites'),
             ]);
 
             if (!binsRes.ok || !sitesRes.ok) {

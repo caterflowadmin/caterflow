@@ -1,4 +1,5 @@
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
 
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback } from "react";
@@ -99,7 +100,7 @@ export default function UsersPage() {
     try {
       const [usersResponse, sitesResponse] = await Promise.all([
         fetch("/api/users"),
-        fetch("/api/sites"),
+        cachedFetch("/api/sites"),
       ]);
 
       if (!usersResponse.ok || !sitesResponse.ok) {

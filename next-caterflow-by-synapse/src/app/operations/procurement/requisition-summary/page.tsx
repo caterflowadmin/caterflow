@@ -1,5 +1,6 @@
 // src/app/operations/procurement/requisition-summary/page.tsx - FIXED VERSION
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 
 import {
@@ -444,7 +445,7 @@ export default function EnhancedRequisitionSummaryPage() {
   // Fetch categories - memoized to prevent unnecessary re-fetches
   const fetchCategories = useCallback(async () => {
     try {
-      const response = await fetch("/api/categories");
+      const response = await cachedFetch("/api/categories");
       if (!response.ok) throw new Error("Failed to fetch categories");
       const data = await response.json();
       setCategories(data);

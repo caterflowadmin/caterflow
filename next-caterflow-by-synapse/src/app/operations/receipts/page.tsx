@@ -1,5 +1,6 @@
 "use client";
 
+import { fetchRecentThenArchive } from '@/lib/fetchRecentThenArchive';
 import { useState, useEffect, useCallback } from "react";
 import {
   Box,
@@ -153,29 +154,20 @@ export default function GoodsReceiptsPage() {
 
   const fetchGoodsReceipts = useCallback(async () => {
     try {
-      const response = await fetch("/api/goods-receipts");
-      if (response.ok) {
-        const data = await response.json();
-
-        // Process data to extract supplier names from purchase order items
-        const processedData = data.map((receipt: any) => {
-          // Extract supplier names from the purchase order's ordered items
-          const supplierNames = receipt.purchaseOrder
-            ? extractSupplierNamesFromPO(receipt.purchaseOrder)
-            : "No suppliers";
-
-          return {
-            ...receipt,
-            // Add supplierNames to the receipt for easy access
-            supplierNames,
-          };
-        });
-
-        setGoodsReceipts(processedData || []);
-        setGoodsReceiptsList(processedData || []);
-      } else {
-        throw new Error("Failed to fetch goods receipts");
-      }
+      await fetchRecentThenArchive<any>("/api/goods-receipts", {
+        dateField: "receiptDate",
+        onData: (data) => {
+          // Process data to extract supplier names from purchase order items
+          const processedData = data.map((receipt: any) => {
+            const supplierNames = receipt.purchaseOrder
+              ? extractSupplierNamesFromPO(receipt.purchaseOrder)
+              : "No suppliers";
+            return { ...receipt, supplierNames };
+          });
+          setGoodsReceipts(processedData || []);
+          setGoodsReceiptsList(processedData || []);
+        },
+      });
     } catch (error) {
       console.error("Error fetching goods receipts:", error);
       toast({
@@ -190,7 +182,7 @@ export default function GoodsReceiptsPage() {
 
   const fetchAllPurchaseOrders = useCallback(async () => {
     try {
-      const response = await fetch("/api/purchase-orders");
+      const response = await fetch("/api/purchase-orders?archived=false");
       if (response.ok) {
         const data = await response.json();
 

@@ -47,13 +47,22 @@ export async function POST(request: NextRequest) {
   const t0 = Date.now();
   const timings: Timings = {};
   try {
-    const { siteIds } = await request.json();
+    // `selectFirstSite` lets the dashboard bootstrap in ONE round trip: the
+    // server resolves the user's sites, picks the default (first) site and
+    // returns the sites list together with that site's stats.
+    const { siteIds, selectFirstSite } = await request.json();
     const userSiteInfo = await getUserSiteInfo(request);
+    let bootstrapSites: { _id: string; name: string }[] | undefined;
 
     // Determine which site IDs the user is allowed to access
     let allowedSiteIds: string[] = [];
 
-    if (userSiteInfo.canAccessMultipleSites) {
+    if (selectFirstSite) {
+      bootstrapSites = await timed('sites', () => fetchAllUserSites(userSiteInfo), timings);
+      allowedSiteIds = bootstrapSites && bootstrapSites.length > 0
+        ? [userSiteInfo.canAccessMultipleSites ? bootstrapSites[0]._id : (userSiteInfo.userSiteId as string)]
+        : [];
+    } else if (userSiteInfo.canAccessMultipleSites) {
       // Admin/auditor can access all requested sites or all sites if none specified
       if (siteIds && Array.isArray(siteIds) && siteIds.length > 0) {
         allowedSiteIds = siteIds;
@@ -69,16 +78,20 @@ export async function POST(request: NextRequest) {
     if (allowedSiteIds.length === 0) {
       return NextResponse.json({
         transactions: [],
-        stats: getEmptyStats()
+        stats: getEmptyStats(),
+        ...(bootstrapSites ? { sites: bootstrapSites, selectedSiteId: null } : {}),
       });
     }
+
+    const withBootstrap = (payload: any) =>
+      bootstrapSites ? { ...payload, sites: bootstrapSites, selectedSiteId: allowedSiteIds[0] } : payload;
 
     // Check cache with allowed site IDs
     const cacheKey = JSON.stringify([...allowedSiteIds].sort());
     const cachedData = cache.get(cacheKey);
 
     if (cachedData && Date.now() - cachedData.timestamp < CACHE_TTL) {
-      return withServerTiming(NextResponse.json(cachedData.data), { cache: 0 }, Date.now() - t0);
+      return withServerTiming(NextResponse.json(withBootstrap(cachedData.data)), { cache: 0 }, Date.now() - t0);
     }
 
     const now = new Date();
@@ -129,7 +142,7 @@ export async function POST(request: NextRequest) {
 
     cache.set(cacheKey, { data: result, timestamp: Date.now() });
 
-    return withServerTiming(NextResponse.json(result), timings, Date.now() - t0);
+    return withServerTiming(NextResponse.json(withBootstrap(result)), timings, Date.now() - t0);
 
   } catch (error) {
     console.error('Dashboard stats error:', error);

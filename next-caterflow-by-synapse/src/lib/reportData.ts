@@ -32,6 +32,9 @@ async function readJson(
   }
 }
 
+// Reports need the COMPLETE history (archive included), so no `archived=false`.
+const internalRequest = () => new Request("http://internal/ledger");
+
 export async function loadLedgerDocs(
   siteId: string | null,
 ): Promise<LedgerDocs> {
@@ -46,9 +49,9 @@ export async function loadLedgerDocs(
   ]);
 
   const [receipts, dispatches, counts, transfers] = await Promise.all([
-    readJson("goods receipts", () => gr.GET() as Promise<Response>, failed),
-    readJson("dispatches", () => dp.GET() as Promise<Response>, failed),
-    readJson("bin counts", () => (bc as any).GET() as Promise<Response>, failed),
+    readJson("goods receipts", () => gr.GET(internalRequest()) as Promise<Response>, failed),
+    readJson("dispatches", () => dp.GET(internalRequest()) as Promise<Response>, failed),
+    readJson("bin counts", () => bc.GET(internalRequest()) as Promise<Response>, failed),
     readJson("transfers", () => tr.GET() as Promise<Response>, failed),
   ]);
 

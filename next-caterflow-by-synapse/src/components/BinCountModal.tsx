@@ -1,3 +1,4 @@
+import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 // src/components/BinCountModal.tsx
 import React, { useState, useEffect, useMemo, useCallback } from "react";
@@ -479,7 +480,7 @@ export default function BinCountModal({
     setLoading(true);
     try {
       // Changed from /api/procurement/stock-items to /api/stock-items for accurate unitPrice
-      const response = await fetch("/api/stock-items");
+      const response = await cachedFetch("/api/stock-items");
       if (!response.ok) throw new Error("Failed to fetch stock items");
 
       const allStockItems: StockItemForSelector[] = await response.json();

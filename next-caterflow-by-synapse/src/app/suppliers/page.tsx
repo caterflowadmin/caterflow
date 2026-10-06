@@ -1,4 +1,5 @@
 'use client';
+import { cachedFetch } from '@/lib/clientCache';
 
 import { useState, useEffect, useCallback } from 'react';
 import {
@@ -56,7 +57,7 @@ export default function SuppliersPage() {
 
     const fetchSuppliers = useCallback(async () => {
         try {
-            const response = await fetch('/api/suppliers');
+            const response = await cachedFetch('/api/suppliers');
             if (response.ok) {
                 const data = await response.json();
                 setSuppliers(data);

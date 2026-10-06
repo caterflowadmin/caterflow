@@ -200,6 +200,8 @@ export default function Home() {
 
   const toast = useToast();
   const sitesContainerRef = useRef<HTMLDivElement>(null);
+  // Site whose stats arrived with the bootstrap response (skips one duplicate fetch).
+  const bootstrappedSiteRef = useRef<string | null>(null);
 
   const user = session?.user as SessionUser | undefined;
   const userRole = user?.role;
@@ -234,15 +236,26 @@ export default function Home() {
           return;
         }
 
-        // /api/sites already applies per-role site filtering server-side.
-        const response = await fetch('/api/sites');
+        // One round trip: the server resolves this user's sites, picks the
+        // default (first) site and returns its stats too.
+        const response = await fetch('/api/dashboard/stats', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ selectFirstSite: true }),
+        });
 
         if (!response.ok) {
           throw new Error('Failed to fetch sites');
         }
 
-        const fetchedSites: Site[] = (await response.json()).map((s: any) => ({ _id: s._id, name: s.name }));
+        const boot = await response.json();
+        const fetchedSites: Site[] = (boot.sites || []).map((s: any) => ({ _id: s._id, name: s.name }));
         setSites(fetchedSites);
+        if (boot.selectedSiteId) {
+          bootstrappedSiteRef.current = boot.selectedSiteId;
+          setTransactions(boot.transactions || []);
+          setDashboardStats(boot.stats || getEmptyStats());
+        }
 
         // Auto-select first site if available
         if (fetchedSites.length > 0) {
@@ -272,6 +285,13 @@ export default function Home() {
 
   useEffect(() => {
     if (!isAuthReady || isSitesLoading) return;
+
+    // Stats for the default site already came with the bootstrap response.
+    if (selectedSiteId && bootstrappedSiteRef.current === selectedSiteId) {
+      bootstrappedSiteRef.current = null;
+      setIsLoading(false);
+      return;
+    }
 
     const fetchDashboardData = async () => {
       setIsLoading(true);

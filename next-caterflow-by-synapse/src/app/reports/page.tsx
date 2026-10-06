@@ -1,5 +1,6 @@
 // src/app/reports/page.tsx - COMPREHENSIVE FIX: correct stock math, normalized VAT, robust filtering
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
@@ -1551,7 +1552,7 @@ export default function ComprehensiveReportsPage() {
         logger.debug(`🔍 Getting filtered stock for site: ${filterSiteId}`);
 
         // Get bins for this site
-        const binsResponse = await fetch(`/api/bins?siteId=${filterSiteId}`);
+        const binsResponse = await cachedFetch(`/api/bins?siteId=${filterSiteId}`);
         if (!binsResponse.ok) {
           throw new Error("Failed to fetch bins for site");
         }
@@ -3290,7 +3291,7 @@ export default function ComprehensiveReportsPage() {
     const fetchSites = async () => {
       try {
         logger.debug("🌐 Fetching sites for reports...");
-        const response = await fetch("/api/sites");
+        const response = await cachedFetch("/api/sites");
         if (response.ok) {
           const data = await response.json();
           logger.debug("✅ Sites fetched:", data.length, "sites");
@@ -3671,7 +3672,7 @@ export default function ComprehensiveReportsPage() {
   useEffect(() => {
     const fetchAvailableSites = async () => {
       try {
-        const response = await fetch("/api/sites");
+        const response = await cachedFetch("/api/sites");
         if (response.ok) {
           const allSites = await response.json();
 

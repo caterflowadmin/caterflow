@@ -28,7 +28,10 @@ const getCurrentStockForItem = async (
   }
 };
 
-export async function GET() {
+export async function GET(request: Request) {
+  // ?archived=false skips the (unbounded) MongoDB archive merge for fast operational lists.
+  const includeArchived = new URL(request.url).searchParams.get('archived') !== 'false';
+  const onlyArchived = new URL(request.url).searchParams.get('archived') === 'only';
   try {
     logger.debug("🔍 Starting bin counts fetch...");
     const userSiteInfo = await getUserSiteInfo();
@@ -80,7 +83,7 @@ export async function GET() {
         }`;
 
     logger.debug("📊 Executing GROQ query...");
-    const binCounts = await client.fetch(query);
+    const binCounts = onlyArchived ? [] : await client.fetch(query);
     logger.debug("✅ Found bin counts:", binCounts?.length || 0);
 
     const countsWithTotals = binCounts.map((count: any) => {
@@ -120,7 +123,7 @@ export async function GET() {
 
     // ── Fetch archived bin counts from MongoDB ──
     let archivedCounts: any[] = [];
-    try {
+    if (includeArchived) try {
         const raw = await getArchivedBinCounts({
             userSiteId: userSiteInfo.userSiteId,
             canAccessMultipleSites: userSiteInfo.canAccessMultipleSites,

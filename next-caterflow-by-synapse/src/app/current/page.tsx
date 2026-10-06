@@ -1,5 +1,6 @@
 // src/app/current/page.tsx
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -291,7 +292,7 @@ export default function CurrentStockPage() {
         setProgress({ stage: "Fetching items and bins...", percentage: 10 });
 
         const [stockItemsResponse, binsResponse] = await Promise.all([
-          fetch("/api/stock-items"),
+          cachedFetch("/api/stock-items"),
           fetch(siteId ? `/api/bins?siteId=${siteId}` : "/api/bins"),
         ]);
 
@@ -528,7 +529,7 @@ export default function CurrentStockPage() {
   const fetchSites = async () => {
     try {
       logger.debug("🌐 Fetching sites...");
-      const response = await fetch("/api/sites");
+      const response = await cachedFetch("/api/sites");
       if (!response.ok) {
         throw new Error("Failed to fetch sites");
       }

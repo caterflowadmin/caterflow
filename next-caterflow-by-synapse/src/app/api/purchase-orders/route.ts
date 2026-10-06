@@ -86,6 +86,9 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');
         const status = searchParams.get('status');
+        // ?archived=false skips the (unbounded) MongoDB archive merge for fast operational lists.
+        const includeArchived = searchParams.get('archived') !== 'false';
+        const onlyArchived = searchParams.get('archived') === 'only';
 
         // Get user site info for filtering
         const userSiteInfo = await getUserSiteInfo(request);
@@ -163,9 +166,27 @@ export async function GET(request: Request) {
         }
 
         // Complete the query with a closing bracket, ordering, and projection
-        const allQuery = groq`${baseQuery}] | order(orderDate desc) ${purchaseOrderProjection}`;
 
-        let purchaseOrders = await client.fetch(allQuery, queryParams);
+        // List view: avoid the per-order correlated count() subquery by fetching the
+        // set of PO ids that have receipts once, in parallel, and joining locally.
+        const listProjection = purchaseOrderProjection.replace(
+            /,\s*"hasReceipts":[^\n]*/,
+            '',
+        );
+        const listQuery = groq`${baseQuery}] | order(orderDate desc) ${listProjection}`;
+        const receiptPoIdsQuery = groq`array::unique(*[_type == "GoodsReceipt" && defined(purchaseOrder)].purchaseOrder._ref)`;
+
+        const [fetchedOrders, receiptPoIds] = onlyArchived
+            ? [[], []]
+            : await Promise.all([
+                client.fetch(listQuery, queryParams),
+                client.fetch(receiptPoIdsQuery),
+            ]);
+        const poIdsWithReceipts = new Set<string>(receiptPoIds || []);
+        let purchaseOrders = (fetchedOrders || []).map((o: any) => ({
+            ...o,
+            hasReceipts: poIdsWithReceipts.has(o._id),
+        }));
 
         const processedOrders = (purchaseOrders || []).map((order: any) => {
             const suppliers = order.orderedItems
@@ -181,7 +202,7 @@ export async function GET(request: Request) {
 
         // ── Fetch archived POs from MongoDB ──
         let archivedOrders: any[] = [];
-        try {
+        if (includeArchived) try {
             const raw = await getArchivedPurchaseOrders({
                 userSiteId: userSiteInfo.userSiteId,
                 canAccessMultipleSites: userSiteInfo.canAccessMultipleSites,

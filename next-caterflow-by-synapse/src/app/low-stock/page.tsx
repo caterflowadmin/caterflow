@@ -1,5 +1,6 @@
 // src/app/low-stock/page.tsx
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
@@ -169,7 +170,7 @@ export default function LowStockPage() {
         // Fetch all stock items
         setProgress({ stage: "Fetching stock items...", percentage: 10 });
         logger.debug("📦 Fetching all stock items...");
-        const stockItemsResponse = await fetch("/api/stock-items");
+        const stockItemsResponse = await cachedFetch("/api/stock-items");
         if (!stockItemsResponse.ok) {
           throw new Error("Failed to fetch stock items");
         }
@@ -416,7 +417,7 @@ export default function LowStockPage() {
   const fetchSuppliers = async () => {
     try {
       setProgress({ stage: "Fetching suppliers...", percentage: 0 });
-      const response = await fetch("/api/suppliers");
+      const response = await cachedFetch("/api/suppliers");
       if (!response.ok) {
         throw new Error("Failed to fetch suppliers");
       }
@@ -430,7 +431,7 @@ export default function LowStockPage() {
   const fetchSites = async () => {
     try {
       logger.debug("🌐 Fetching sites...");
-      const response = await fetch("/api/sites");
+      const response = await cachedFetch("/api/sites");
       if (!response.ok) {
         throw new Error("Failed to fetch sites");
       }

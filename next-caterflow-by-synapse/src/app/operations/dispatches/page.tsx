@@ -1,6 +1,7 @@
 // src/app/operations/dispatches/page.tsx (REPLACE ENTIRE FILE)
 'use client';
 
+import { fetchRecentThenArchive } from '@/lib/fetchRecentThenArchive';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Box,
@@ -134,13 +135,10 @@ export default function DispatchesPage() {
     const fetchDispatches = useCallback(async () => {
         setLoading(true);
         try {
-            const response = await fetch('/api/dispatches');
-            if (response.ok) {
-                const data = await response.json();
-                setDispatches(data || []);
-            } else {
-                throw new Error('Failed to fetch dispatches');
-            }
+            await fetchRecentThenArchive<any>('/api/dispatches', {
+                dateField: 'dispatchDate',
+                onData: (data) => setDispatches(data || []),
+            });
         } catch (error) {
             console.error('Error fetching dispatches:', error);
             toast({

@@ -1,3 +1,4 @@
+import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 // Enhanced StockItemSelectorModal.tsx with better scrolling UX
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -103,7 +104,7 @@ export default function StockItemSelectorModal({
     const fetchStockItems = useCallback(async () => {
         setLoading(true);
         try {
-            const binsRes = await fetch('/api/bins');
+            const binsRes = await cachedFetch('/api/bins');
             if (binsRes.ok) {
                 const binsData = await binsRes.json();
                 setAllBins(binsData);
@@ -123,7 +124,7 @@ export default function StockItemSelectorModal({
             setStockItems(itemsData);
 
             // Fetch categories in parallel
-            const categoriesRes = await fetch('/api/categories');
+            const categoriesRes = await cachedFetch('/api/categories');
             if (categoriesRes.ok) {
                 const categoriesData = await categoriesRes.json();
                 setCategories(categoriesData);

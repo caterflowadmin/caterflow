@@ -1,5 +1,6 @@
 // src/app/dispatch-types/page.tsx (REPLACE ENTIRE FILE)
 'use client';
+import { cachedFetch } from '@/lib/clientCache';
 
 import { useState, useEffect, useCallback } from 'react';
 import {
@@ -100,8 +101,8 @@ export default function DispatchTypesPage() {
         setLoading(true);
         try {
             const [dispatchTypesRes, sitesRes] = await Promise.all([
-                fetch('/api/dispatch-types'),
-                fetch('/api/sites')
+                cachedFetch('/api/dispatch-types'),
+                cachedFetch('/api/sites')
             ]);
 
             if (!dispatchTypesRes.ok || !sitesRes.ok) {

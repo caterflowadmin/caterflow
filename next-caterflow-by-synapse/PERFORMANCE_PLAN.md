@@ -6,6 +6,35 @@ Status: PLAN ONLY. Nothing here has been implemented. Findings come from a code 
 
 ---
 
+## Implementation status
+
+Verified: `tsc` clean, 209 unit tests pass, production build succeeds and every page is still statically delivered. NOT verified against live Sanity/MongoDB data (none available in the build environment) — measure with the new `Server-Timing` headers after deploying.
+
+| Item | Status |
+|------|--------|
+| 0 Timing helper (`lib/perf.ts`, `Server-Timing`, slow-query log) | Done |
+| 1.1 Gated logger replaces `console.log` in hot paths | Done |
+| 1.2 Middleware cleanup | Done (also fixes role matching: longest-prefix instead of always the `/` list) |
+| 1.3 Dashboard: no `/api/sanity` hop; one bootstrap request | Done |
+| 1.4 Dashboard stats: one combined counts query, parallel; trend bug fixed | Done |
+| 1.5 Bounded stock backfill concurrency | Done |
+| 1.6 API auth (central, in middleware) + `/api/sanity` removed | Done |
+| 1.7 Lookup caching with tag invalidation | Done (server-side tagged cache, not browser `max-age`, so edits show instantly) |
+| 1.8 Server session in root layout | Tried and **reverted**: it made every route dynamic and lost static/CDN delivery |
+| 1.9 Remove unused AuthContext | Done |
+| 2.1 Archive no longer blocks list pages (`archived=false` / `only`, background merge) | Done for purchases, receipts, dispatches, bin counts. True cursor pagination not done |
+| 2.2 Mongo indexes | Core indexes already existed; added site-scoped compound indexes (created on next archive run) |
+| 2.3 Stock engine | Option A done (parsed single-flight registry cache, no registry creation on errors). Option B (move to MongoDB) NOT done — needs a decision + migration |
+| 2.4 Report caching | Ledger load cached 45s. Precomputed summary documents NOT done |
+| 2.5 GROQ hygiene | PO `hasReceipts` N+1 removed. `siteId` denormalisation NOT done (needs migration) |
+| 2.6 Sanity CDN | Deliberately skipped (CDN lag vs. immediate-edit expectation); tagged server cache used instead |
+| 3.1 Skeleton `loading.tsx` | Done. Server-rendering page data NOT done |
+| 3.2 Shared client fetch layer | Done as `cachedFetch` (dedupe + TTL + auto-invalidate); prefetch on hover/touch; removed no-op global loading flag |
+| 3.3 Optimistic UI, 3.4 virtualised tables | NOT done |
+| 3.5 Pause polling when hidden | Done |
+| 4 Bundles | `optimizePackageImports`; service worker no longer caches `/api` (stale / cross-user data risk). Heavy libs were already lazy. Dependency pruning NOT done |
+| 5 Guardrails | README conventions + tests added. CI perf budgets, rate limits, Sanity request timeouts NOT done (a blanket timeout risked breaking archive exports) |
+
 ## 1. Root causes being addressed
 
 | # | Cause | Evidence | Affects |

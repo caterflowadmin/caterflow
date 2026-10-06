@@ -467,14 +467,18 @@ export default function ArchiveManagementPage() {
   useEffect(() => {
     if (!isAuthenticated || !isAdmin || !archiveInProgress) return;
 
-    const intervalId = window.setInterval(fetchLogs, 15000);
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") fetchLogs();
+    }, 15000);
     return () => window.clearInterval(intervalId);
   }, [archiveInProgress, fetchLogs, isAuthenticated, isAdmin]);
 
   useEffect(() => {
     if (!isAuthenticated || !isAdmin || !cleanupInProgress) return;
 
-    const intervalId = window.setInterval(fetchLogs, 15000);
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") fetchLogs();
+    }, 15000);
     return () => window.clearInterval(intervalId);
   }, [cleanupInProgress, fetchLogs, isAuthenticated, isAdmin]);
 

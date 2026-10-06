@@ -2,8 +2,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { Providers } from "./providers";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { Sidebar } from "@/components/Sidebar";
 import { MobileTopbar } from "@/components/MobileTopbar";
 import { Box } from "@chakra-ui/react";
@@ -24,16 +22,11 @@ export const metadata: Metadata = {
   },
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // Resolve the session on the server (just a JWT decode) and hand it to the
-  // client SessionProvider so the sidebar/nav render with the user's role on
-  // first paint instead of waiting on a /api/auth/session round trip.
-  const session = await getServerSession(authOptions);
-
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -48,7 +41,7 @@ export default async function RootLayout({
         />
       </head>
       <body className={inter.className}>
-        <Providers session={session}>
+        <Providers>
             <MobileTopbar />
             <Sidebar />
             <Box

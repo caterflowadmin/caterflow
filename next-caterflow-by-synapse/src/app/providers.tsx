@@ -6,7 +6,10 @@ import themes from './theme/theme';
 import { LoadingProvider } from '@/context/LoadingContext';
 import { SidebarProvider } from '@/context/SidebarContext';
 import { SessionProvider } from 'next-auth/react'; // Import the new provider
-import type { Session } from 'next-auth';
+import { installFetchInvalidation } from '@/lib/clientCache';
+
+// Client-only: make lookup-affecting writes clear the shared fetch cache.
+installFetchInvalidation();
 
 // next-themes' ThemeProvider is already hydration-safe by design (it sets
 // the class via a blocking inline script before first paint, not a
@@ -20,13 +23,14 @@ import type { Session } from 'next-auth';
 
 interface ProvidersProps {
   children?: React.ReactNode;
-  session?: Session | null;
 }
 
-export function Providers({ children, session }: ProvidersProps) {
+export function Providers({ children }: ProvidersProps) {
   return (
     // SessionProvider must wrap the entire application
-    <SessionProvider session={session} refetchOnWindowFocus={false}>
+    // NOTE: the session is deliberately NOT read in the root layout: that would
+    // make every route dynamic and lose static/CDN delivery + prefetched navigation.
+    <SessionProvider refetchOnWindowFocus={false}>
       <ChakraProvider theme={themes}>
         <ThemeProvider
           attribute="class"

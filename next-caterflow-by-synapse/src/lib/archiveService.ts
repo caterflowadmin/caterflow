@@ -1602,6 +1602,18 @@ export async function ensureIndexes(
       options: { unique: true },
     },
 
+    // Site-scoped list queries (non-admin users) sort by date within a site;
+    // compound indexes let MongoDB filter and sort from the index alone.
+    { collection: COLLECTIONS.DISPATCH_LOGS, spec: { "sourceSite._id": 1, dispatchDate: -1 } },
+    { collection: COLLECTIONS.PURCHASE_ORDERS, spec: { "site._id": 1, orderDate: -1 } },
+    { collection: COLLECTIONS.PURCHASE_ORDERS, spec: { status: 1, orderDate: -1 } },
+    { collection: COLLECTIONS.GOODS_RECEIPTS, spec: { "purchaseOrder.site._id": 1, receiptDate: -1 } },
+    { collection: COLLECTIONS.GOODS_RECEIPTS, spec: { "receivedItems.receivingBin.site._id": 1 } },
+    { collection: COLLECTIONS.INTERNAL_TRANSFERS, spec: { "fromBin.site._id": 1, transferDate: -1 } },
+    { collection: COLLECTIONS.INTERNAL_TRANSFERS, spec: { "toBin.site._id": 1, transferDate: -1 } },
+    { collection: COLLECTIONS.INVENTORY_COUNTS, spec: { "bin.site._id": 1, countDate: -1 } },
+    { collection: COLLECTIONS.FILE_ATTACHMENTS, spec: { "relatedTo._id": 1, uploadedAt: -1 } },
+
     { collection: COLLECTIONS.ARCHIVE_RUNS, spec: { startedAt: -1 } },
     {
       collection: COLLECTIONS.SEQUENCE_COUNTERS,

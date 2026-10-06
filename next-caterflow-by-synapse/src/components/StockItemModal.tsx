@@ -1,3 +1,4 @@
+import { cachedFetch } from '@/lib/clientCache';
 // components/StockItemModal.tsx
 import React, { useState, useEffect } from "react";
 import {
@@ -151,12 +152,12 @@ export default function StockItemModal({
       setDataLoading(true);
       try {
         // Fetch categories from the correct endpoint
-        const categoriesResponse = await fetch("/api/categories");
+        const categoriesResponse = await cachedFetch("/api/categories");
         const categoriesData = await categoriesResponse.json();
         setCategories(categoriesData || []);
 
         // Fetch suppliers from the correct endpoint
-        const suppliersResponse = await fetch("/api/suppliers");
+        const suppliersResponse = await cachedFetch("/api/suppliers");
         const suppliersData = await suppliersResponse.json();
         setSuppliers(suppliersData || []);
       } catch (error) {

@@ -1,4 +1,5 @@
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
 
 import { logger } from '@/lib/logger';
 import React, { useState, useEffect, useCallback } from "react";
@@ -276,7 +277,7 @@ export default function GoodsReceiptModal({
         return;
       }
       try {
-        const binsResponse = await fetch(`/api/bins?siteId=${siteId}`);
+        const binsResponse = await cachedFetch(`/api/bins?siteId=${siteId}`);
         if (binsResponse.ok) {
           const bins: Bin[] = await binsResponse.json();
           setAvailableBins(bins);

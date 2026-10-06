@@ -98,7 +98,10 @@ const getSellingPriceForSite = async (dispatchTypeId: string, siteId: string): P
 };
 
 // GET: fetches from Sanity AND MongoDB archive, merges and returns unified list
-export async function GET() {
+export async function GET(request: Request) {
+    // ?archived=false skips the (unbounded) MongoDB archive merge for fast operational lists.
+    const includeArchived = new URL(request.url).searchParams.get('archived') !== 'false';
+    const onlyArchived = new URL(request.url).searchParams.get('archived') === 'only';
     try {
         const userSiteInfo = await getUserSiteInfo();
         const siteFilter = buildTransactionSiteFilter(userSiteInfo);
@@ -208,7 +211,7 @@ export async function GET() {
             }, [])
         }`;
 
-        const dispatches = await client.fetch(query);
+        const dispatches = onlyArchived ? [] : await client.fetch(query);
 
         // Filter out incomplete dispatches (missing required refs)
         const validDispatches = dispatches.filter((dispatch: any) =>
@@ -234,7 +237,7 @@ export async function GET() {
 
         // ── Fetch archived dispatches from MongoDB ──
         let archivedDispatches: any[] = [];
-        try {
+        if (includeArchived) try {
             const raw = await getArchivedDispatchLogs({
                 userSiteId: userSiteInfo.userSiteId,
                 canAccessMultipleSites: userSiteInfo.canAccessMultipleSites,

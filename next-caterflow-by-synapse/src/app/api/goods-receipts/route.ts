@@ -83,7 +83,10 @@ const resolveRef = (val: any): string | null => {
     return null;
 };
 
-export async function GET() {
+export async function GET(request: Request) {
+    // ?archived=false skips the (unbounded) MongoDB archive merge for fast operational lists.
+    const includeArchived = new URL(request.url).searchParams.get('archived') !== 'false';
+    const onlyArchived = new URL(request.url).searchParams.get('archived') === 'only';
     try {
         const userSiteInfo = await getUserSiteInfo();
         const siteFilter = buildGoodsReceiptSiteFilter(userSiteInfo);
@@ -204,7 +207,7 @@ export async function GET() {
             }
         }`;
 
-        const goodsReceipts = await client.fetch(query);
+        const goodsReceipts = onlyArchived ? [] : await client.fetch(query);
 
         logger.debug(`📊 Found ${goodsReceipts?.length || 0} goods receipts after site filtering`);
 
@@ -241,7 +244,7 @@ export async function GET() {
 
         // ── Fetch archived goods receipts from MongoDB ──
         let archivedReceipts: any[] = [];
-        try {
+        if (includeArchived) try {
             const raw = await getArchivedGoodsReceipts({
                 userSiteId: userSiteInfo.userSiteId,
                 canAccessMultipleSites: userSiteInfo.canAccessMultipleSites,

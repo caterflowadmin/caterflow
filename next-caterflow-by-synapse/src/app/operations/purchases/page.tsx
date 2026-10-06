@@ -1,5 +1,7 @@
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
 
+import { fetchRecentThenArchive } from '@/lib/fetchRecentThenArchive';
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Box,
@@ -173,7 +175,7 @@ export default function PurchasesPage() {
   useEffect(() => {
     const fetchSuppliers = async () => {
       try {
-        const response = await fetch("/api/suppliers");
+        const response = await cachedFetch("/api/suppliers");
         if (response.ok) {
           const data = await response.json();
           setSuppliers(data);
@@ -188,7 +190,7 @@ export default function PurchasesPage() {
   useEffect(() => {
     const fetchSites = async () => {
       try {
-        const response = await fetch("/api/sites");
+        const response = await cachedFetch("/api/sites");
         if (response.ok) {
           const data = await response.json();
           setSites(data);
@@ -203,22 +205,21 @@ export default function PurchasesPage() {
   const fetchPurchaseOrders = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/purchase-orders");
-      if (response.ok) {
-        const data = await response.json();
-        const transformedData = data.map((order: any) => ({
-          ...order,
-          siteName: order.site?.name || "",
-          actionType: "PurchaseOrder",
-          title: `Purchase Order ${order.poNumber}`,
-          description: `Order from ${order.supplierNames}`,
-          priority: "medium",
-          createdAt: order.orderDate,
-        }));
-        setPurchaseOrders(transformedData);
-      } else {
-        throw new Error("Failed to fetch purchase orders");
-      }
+      await fetchRecentThenArchive<any>("/api/purchase-orders", {
+        dateField: "orderDate",
+        onData: (data) => {
+          const transformedData = data.map((order: any) => ({
+            ...order,
+            siteName: order.site?.name || "",
+            actionType: "PurchaseOrder",
+            title: `Purchase Order ${order.poNumber}`,
+            description: `Order from ${order.supplierNames}`,
+            priority: "medium",
+            createdAt: order.orderDate,
+          }));
+          setPurchaseOrders(transformedData);
+        },
+      });
     } catch (error) {
       console.error("Error fetching purchase orders:", error);
       toast({

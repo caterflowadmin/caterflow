@@ -1,5 +1,6 @@
 // components/TransferModal.tsx
 "use client";
+import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -240,14 +241,14 @@ export default function TransferModal({
         // The server enforces role-based access; falls back to own-site on 403.
         logger.debug("🗄️ Fetching bins (all sites for transfer)...");
         let binsData: any[] = [];
-        const allBinsRes = await fetch("/api/bins?allowAll=true");
+        const allBinsRes = await cachedFetch("/api/bins?allowAll=true");
         if (allBinsRes.ok) {
           binsData = await allBinsRes.json();
           logger.debug(`✅ All-sites bins fetched: ${binsData.length}`);
         } else if (allBinsRes.status === 403) {
           // Role not permitted to see all bins; fall back to own-site only
           console.warn("⚠️ allowAll denied, falling back to own-site bins");
-          const fallbackRes = await fetch("/api/bins");
+          const fallbackRes = await cachedFetch("/api/bins");
           if (fallbackRes.ok) {
             binsData = await fallbackRes.json();
             logger.debug(`✅ Own-site bins fetched: ${binsData.length}`);
