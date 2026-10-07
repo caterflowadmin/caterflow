@@ -1,4 +1,5 @@
 'use client';
+import dynamic from 'next/dynamic';
 import { cachedFetch } from '@/lib/clientCache';
 
 import { useState, useEffect, useCallback } from 'react';
@@ -22,8 +23,7 @@ import {
 import { FiPlus, FiSearch, FiEdit, FiTrash2 } from 'react-icons/fi';
 import DataTable from '@/components/DataTable';
 import { useSession } from 'next-auth/react'
-import SupplierModal from '@/components/SupplierModal';
-
+const SupplierModal = dynamic(() => import('@/components/SupplierModal'), { ssr: false });
 interface Supplier {
     _id: string;
     name: string;

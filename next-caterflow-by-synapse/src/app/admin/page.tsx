@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useState, useEffect, useCallback } from 'react';
 import {
   Box,
@@ -26,8 +27,7 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation';
 import { FiEdit } from 'react-icons/fi';
 import { AppUser, Site } from '@/lib/sanityTypes';
-import UserManagementModal from '@/components/UserManagementModal';
-
+const UserManagementModal = dynamic(() => import('@/components/UserManagementModal'), { ssr: false });
 interface UserWithSiteName extends AppUser {
   associatedSiteName?: string;
 }

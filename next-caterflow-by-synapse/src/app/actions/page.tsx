@@ -1,6 +1,7 @@
 // src/app/actions/page.tsx (REPLACE ENTIRE FILE)
 "use client";
 
+import dynamic from 'next/dynamic';
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Box,
@@ -37,11 +38,11 @@ import PurchaseOrderModal, {
   PurchaseOrderDetails,
 } from "../../components/PurchaseOrderModal";
 import DataTable from "./DataTable";
-import GoodsReceiptModal from "@/components/GoodsReceiptModal";
-import TransferModal from "@/components/TransferModal";
-import BinCountModal from "@/components/BinCountModal";
-import DispatchModal from "@/components/DispatchModal";
-import StockItemSelectorModal from "@/components/StockItemSelectorModal";
+const GoodsReceiptModal = dynamic(() => import("@/components/GoodsReceiptModal"), { ssr: false });
+const TransferModal = dynamic(() => import("@/components/TransferModal"), { ssr: false });
+const BinCountModal = dynamic(() => import("@/components/BinCountModal"), { ssr: false });
+const DispatchModal = dynamic(() => import("@/components/DispatchModal"), { ssr: false });
+const StockItemSelectorModal = dynamic(() => import("@/components/StockItemSelectorModal"), { ssr: false });
 import { resolveUnitPrice } from "@/lib/unitPriceResolver";
 import { FiPlus } from "react-icons/fi";
 

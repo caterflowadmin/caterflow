@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useState, useEffect, useCallback, ChangeEvent } from 'react';
 import {
     Box,
@@ -26,8 +27,7 @@ import {
 import { FiPlus, FiSearch, FiEdit, FiEye, FiFilter, FiArrowLeft, FiArrowRight } from 'react-icons/fi';
 import DataTable from '@/app/actions/DataTable';
 import { useSession } from 'next-auth/react';
-import TransferModal from '@/components/TransferModal';
-
+const TransferModal = dynamic(() => import('@/components/TransferModal'), { ssr: false });
 // Standardized interfaces to match TransferModal.tsx
 interface Site {
     _id: string;

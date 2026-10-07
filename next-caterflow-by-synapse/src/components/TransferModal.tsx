@@ -1,5 +1,6 @@
 // components/TransferModal.tsx
 "use client";
+import dynamic from 'next/dynamic';
 import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 
@@ -52,7 +53,7 @@ import {
   FiSend,
   FiFileText,
 } from "react-icons/fi";
-import StockItemSelectorModal from "./StockItemSelectorModal";
+const StockItemSelectorModal = dynamic(() => import("./StockItemSelectorModal"), { ssr: false });
 import { nanoid } from "nanoid";
 import { useSession } from "next-auth/react";
 import { getBinStock } from "@/lib/stockCalculations";

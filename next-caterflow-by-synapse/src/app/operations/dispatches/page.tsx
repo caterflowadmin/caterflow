@@ -1,6 +1,7 @@
 // src/app/operations/dispatches/page.tsx (REPLACE ENTIRE FILE)
 'use client';
 
+import dynamic from 'next/dynamic';
 import { fetchRecentThenArchive } from '@/lib/fetchRecentThenArchive';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -27,8 +28,7 @@ import {
 import { FiPlus, FiSearch, FiEye, FiFilter, FiEdit, FiChevronUp, FiChevronDown } from 'react-icons/fi';
 import DataTable from '@/components/DataTable';
 import { useSession } from 'next-auth/react'
-import DispatchModal from '@/components/DispatchModal';
-
+const DispatchModal = dynamic(() => import('@/components/DispatchModal'), { ssr: false });
 interface DispatchRecord {
     _id: string;
     dispatchNumber: string;

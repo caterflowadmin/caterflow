@@ -1,11 +1,12 @@
 // src/app/current/page.tsx
 "use client";
+import dynamic from 'next/dynamic';
 import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 
 import { useState, useEffect, useRef, useCallback } from "react";
 
-import SimpleCalculationsModal from "@/components/SimpleCalculationsModal";
+const SimpleCalculationsModal = dynamic(() => import("@/components/SimpleCalculationsModal"), { ssr: false });
 import {
   Box,
   Heading,
@@ -66,8 +67,7 @@ import {
 } from "@/lib/stockCalculations";
 
 import { useDisclosure } from "@chakra-ui/react";
-import CalculationsModal from "@/components/CalculationsModal";
-
+const CalculationsModal = dynamic(() => import("@/components/CalculationsModal"), { ssr: false });
 interface CurrentStockItem extends StockItem {
   currentStock: number;
   siteName: string;
