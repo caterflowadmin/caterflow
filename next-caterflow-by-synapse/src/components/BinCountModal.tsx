@@ -1,3 +1,4 @@
+import dynamic from 'next/dynamic';
 import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 // src/components/BinCountModal.tsx
@@ -59,8 +60,8 @@ import {
   FiX,
   FiFilter,
 } from "react-icons/fi";
-import BinSelectorModal from "./BinSelectorModal";
-import StockItemSelectorModal from "./StockItemSelectorModal";
+const BinSelectorModal = dynamic(() => import("./BinSelectorModal"), { ssr: false });
+const StockItemSelectorModal = dynamic(() => import("./StockItemSelectorModal"), { ssr: false });
 import { useSession } from "next-auth/react";
 import { nanoid } from "nanoid";
 import { StockItem } from "@/lib/sanityTypes";

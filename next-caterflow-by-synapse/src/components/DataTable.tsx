@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useMemo, ChangeEvent } from 'react';
+import React, { useState, useMemo, useEffect, ChangeEvent } from 'react';
 import {
     Table,
     Thead,
@@ -53,6 +53,12 @@ export default function DataTable({
     onSelectionChange,
 }: DataTableProps) {
     const [searchTerm, setSearchTerm] = useState('');
+    // The deep search walks every row; debounce so typing stays responsive.
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedSearch(searchTerm), 250);
+        return () => clearTimeout(t);
+    }, [searchTerm]);
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(10);
     const [sortColumn, setSortColumn] = useState<string | null>(null); // Use keyof PendingAction
@@ -210,7 +216,7 @@ export default function DataTable({
 
     const processedData = useMemo(() => {
         // 1. Filter Data - search across all available information
-        const filtered = data.filter((row) => searchAllData(row, searchTerm));
+        const filtered = data.filter((row) => searchAllData(row, debouncedSearch));
 
         // 2. Sort Data
         if (sortColumn && sortDirection) {
@@ -257,7 +263,7 @@ export default function DataTable({
             });
         }
         return filtered;
-    }, [data, searchTerm, sortColumn, sortDirection]);
+    }, [data, debouncedSearch, sortColumn, sortDirection]);
 
     // 3. Paginate Data
     const totalPages = Math.ceil(processedData.length / itemsPerPage);

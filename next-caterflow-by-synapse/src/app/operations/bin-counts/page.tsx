@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from 'next/dynamic';
 import { fetchRecentThenArchive } from '@/lib/fetchRecentThenArchive';
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -40,8 +41,7 @@ import {
 } from "react-icons/fi";
 import DataTable from "@/components/DataTable";
 import { useSession } from "next-auth/react";
-import BinCountModal from "@/components/BinCountModal";
-
+const BinCountModal = dynamic(() => import("@/components/BinCountModal"), { ssr: false });
 interface CountedItem {
   _key: string;
   stockItem: {

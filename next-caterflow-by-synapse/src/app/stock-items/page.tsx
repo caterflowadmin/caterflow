@@ -1,5 +1,6 @@
 'use client'
 
+import dynamic from 'next/dynamic';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Box,
@@ -19,7 +20,7 @@ import { client } from '@/lib/sanity';
 import { groq } from 'next-sanity';
 import DataTable, { Column } from '@/components/DataTable';
 import { useRouter } from 'next/navigation';
-import StockItemModal from '@/components/StockItemModal';
+const StockItemModal = dynamic(() => import('@/components/StockItemModal'), { ssr: false });
 import { EditIcon, DeleteIcon, AddIcon } from '@chakra-ui/icons';
 import { useSession } from 'next-auth/react'
 

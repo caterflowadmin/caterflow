@@ -1,5 +1,6 @@
 // src/app/operations/procurement/page.tsx
 "use client";
+import dynamic from 'next/dynamic';
 import { cachedFetch } from '@/lib/clientCache';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
@@ -65,7 +66,7 @@ import {
 } from "react-icons/fi";
 import DataTable from "@/app/actions/DataTable";
 import { useSession } from "next-auth/react";
-import CreatePurchaseOrderModal from "@/components/CreatePurchaseOrderModal";
+const CreatePurchaseOrderModal = dynamic(() => import("@/components/CreatePurchaseOrderModal"), { ssr: false });
 import PurchaseOrderModal, {
   PurchaseOrderDetails,
 } from "@/components/PurchaseOrderModal";

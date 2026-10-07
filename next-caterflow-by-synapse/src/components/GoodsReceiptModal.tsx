@@ -1,4 +1,5 @@
 "use client";
+import dynamic from 'next/dynamic';
 import { cachedFetch } from '@/lib/clientCache';
 
 import { logger } from '@/lib/logger';
@@ -65,7 +66,7 @@ import {
   getRecentUnitPricesForItemsInBin,
   resolveUnitPrice,
 } from "@/lib/unitPriceResolver";
-import FileUploadModal from "@/components/FileUploadModal";
+const FileUploadModal = dynamic(() => import("@/components/FileUploadModal"), { ssr: false });
 import {
   parseInvoiceMetadata,
   isInvoiceAttachment,

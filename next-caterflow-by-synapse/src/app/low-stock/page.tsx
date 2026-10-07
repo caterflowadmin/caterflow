@@ -1,5 +1,6 @@
 // src/app/low-stock/page.tsx
 "use client";
+import dynamic from 'next/dynamic';
 import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 
@@ -62,7 +63,7 @@ import {
 } from "react-icons/fi";
 import { MdOutlineLowPriority } from "react-icons/md";
 import DataTable, { Column } from "@/components/DataTable";
-import CreatePurchaseOrderModal from "@/components/CreatePurchaseOrderModal";
+const CreatePurchaseOrderModal = dynamic(() => import("@/components/CreatePurchaseOrderModal"), { ssr: false });
 import { Site, Supplier, StockItem } from "@/lib/sanityTypes";
 import { calculateBulkStock } from "@/lib/stockCalculations";
 import { resolveUnitPrice } from "@/lib/unitPriceResolver";
@@ -170,6 +171,12 @@ export default function LowStockPage() {
         // Fetch all stock items
         setProgress({ stage: "Fetching stock items...", percentage: 10 });
         logger.debug("📦 Fetching all stock items...");
+        // Bins don't depend on items, so start both requests together.
+        const binsEndpointEarly = siteId
+          ? `/api/bins?siteId=${siteId}`
+          : "/api/bins";
+        const binsPromise = fetch(binsEndpointEarly);
+        binsPromise.catch(() => {}); // avoid an unhandled rejection on early exit
         const stockItemsResponse = await cachedFetch("/api/stock-items");
         if (!stockItemsResponse.ok) {
           throw new Error("Failed to fetch stock items");
@@ -191,7 +198,7 @@ export default function LowStockPage() {
           ? `/api/bins?siteId=${siteId}`
           : "/api/bins";
         logger.debug("🗄️ Fetching bins from:", binsEndpoint);
-        const binsResponse = await fetch(binsEndpoint);
+        const binsResponse = await binsPromise;
         if (!binsResponse.ok) {
           throw new Error("Failed to fetch bins");
         }
@@ -446,9 +453,12 @@ export default function LowStockPage() {
   useEffect(() => {
     if (isAuthReady && isAuthenticated) {
       const initData = async () => {
-        await fetchSites();
-        await calculateStockForSite(selectedSiteId);
-        await fetchSuppliers();
+        // Independent requests: run together instead of one after another.
+        await Promise.all([
+          fetchSites(),
+          calculateStockForSite(selectedSiteId),
+          fetchSuppliers(),
+        ]);
       };
       initData();
     }

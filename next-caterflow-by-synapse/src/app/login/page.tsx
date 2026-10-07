@@ -34,7 +34,6 @@ import {
 import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn, useSession } from 'next-auth/react';
-import { motion } from 'framer-motion';
 
 // useSearchParams() opts this out of static rendering, which requires a
 // Suspense boundary around the component that calls it — see the default
@@ -195,11 +194,7 @@ function LoginPageInner() {
         bg={bgPrimary}
         p={4}
       >
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-        >
+        <div className="login-card-enter">
           <Card
             bg={bgCard}
             boxShadow="xl"
@@ -296,7 +291,7 @@ function LoginPageInner() {
               </VStack>
             </CardBody>
           </Card>
-        </motion.div>
+        </div>
       </Flex>
 
       {/* Password Reset Modal */}

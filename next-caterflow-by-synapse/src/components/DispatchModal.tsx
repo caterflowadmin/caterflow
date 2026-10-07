@@ -1,5 +1,6 @@
 // src/components/DispatchModal.tsx (REPLACE ENTIRE FILE)
 "use client";
+import dynamic from 'next/dynamic';
 import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 
@@ -66,8 +67,8 @@ import {
   FiCheck,
   FiRefreshCw,
 } from "react-icons/fi";
-import StockItemSelectorModal from "./StockItemSelectorModal";
-import FileUploadModal from "./FileUploadModal";
+const StockItemSelectorModal = dynamic(() => import("./StockItemSelectorModal"), { ssr: false });
+const FileUploadModal = dynamic(() => import("./FileUploadModal"), { ssr: false });
 import { nanoid } from "nanoid";
 import { useSession } from "next-auth/react";
 
