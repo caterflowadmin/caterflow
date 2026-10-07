@@ -133,10 +133,13 @@ import {
 import { filterDataBySite } from "@/lib/reportFilters";
 import {
   computeFinancials,
+  dispatchCost,
   dispatchSales,
   isEffectiveCount,
   isEffectiveDispatch,
   isEffectiveReceipt,
+  receiptValue,
+  round2,
   type IntegrityIssue,
 } from "@/lib/financialReport";
 
@@ -2640,7 +2643,6 @@ export default function ComprehensiveReportsPage() {
           "",
           analyticsData?.dispatches.costPerPerson || 0,
         ],
-        ["Sales Efficiency", "", ...allDates.map(() => ""), "", "", "95%"],
         [
           "VAT Rate Applied",
           "",
@@ -2659,39 +2661,26 @@ export default function ComprehensiveReportsPage() {
     setExportLoading(true);
     try {
       logger.debug("📊 Starting comprehensive Excel export with VAT...");
-      const [XLSX, { saveAs }] = await Promise.all([
+      const [XLSX, fileSaver] = await Promise.all([
         import("xlsx"),
         import("file-saver"),
       ]);
+      const saveAs: (data: Blob, name: string) => void =
+        (fileSaver as any).saveAs ?? (fileSaver as any).default;
 
-      // Validate we have data before exporting
-      const hasData =
-        Object.keys(rawData).length > 0 &&
-        Object.values(rawData).some((data: any) => data && data.length > 0);
-
-      if (!hasData) {
-        logger.debug("🔄 No data available, fetching data first...");
-        await fetchAllData(true);
-
-        // Check again after fetch
-        const stillNoData =
-          Object.keys(rawData).length === 0 ||
-          Object.values(rawData).every(
-            (data: any) => !data || data.length === 0,
-          );
-
-        if (stillNoData) {
-          toast({
-            title: "No Data Available",
-            description:
-              "Cannot export - no data is available from the server.",
-            status: "warning",
-            duration: 5000,
-            isClosable: true,
-          });
-          return;
-        }
-      }
+      // Same scope as the on-screen summary: the selected site, and only
+      // documents that actually moved stock.
+      const siteScope = selectedFilterSite || null;
+      const exportReceipts = filterDataBySite(
+        rawData.goodsReceipts || [],
+        siteScope,
+        "goodsReceipt",
+      ).filter(isEffectiveReceipt);
+      const exportDispatches = filterDataBySite(
+        rawData.dispatches || [],
+        siteScope,
+        "dispatch",
+      ).filter(isEffectiveDispatch);
 
       const workbook = XLSX.utils.book_new();
 
@@ -2704,9 +2693,7 @@ export default function ComprehensiveReportsPage() {
 
       // 2. SALES SUMMARY SHEET WITH VAT
       logger.debug("📝 Creating Sales Summary sheet with VAT...");
-      const salesSummaryData = createFormattedSalesSummaryData(
-        rawData.dispatches || [],
-      );
+      const salesSummaryData = createFormattedSalesSummaryData(exportDispatches);
       const salesSummarySheet = XLSX.utils.aoa_to_sheet(salesSummaryData);
       autoFitColumns(salesSummarySheet);
       XLSX.utils.book_append_sheet(
@@ -2718,7 +2705,11 @@ export default function ComprehensiveReportsPage() {
       // 3. PURCHASE ORDERS SHEET WITH VAT
       logger.debug("📝 Creating Purchase Orders sheet with VAT...");
       const periodPOs = filterDataByDateRange(
-        rawData.purchaseOrders || [],
+        filterDataBySite(
+          rawData.purchaseOrders || [],
+          siteScope,
+          "purchaseOrder",
+        ),
         "orderDate",
       );
       const poData = periodPOs.map((po: any) => ({
@@ -2749,7 +2740,7 @@ export default function ComprehensiveReportsPage() {
       // 4. GOODS RECEIPTS SHEET WITH VAT
       logger.debug("📝 Creating Goods Receipts sheet with VAT...");
       const periodGoodsReceipts = filterDataByDateRange(
-        rawData.goodsReceipts || [],
+        exportReceipts,
         "receiptDate",
       );
       // Update the grData mapping:
@@ -2767,12 +2758,7 @@ export default function ComprehensiveReportsPage() {
           "PO Number": gr.purchaseOrder?.poNumber || "N/A",
           "Receiving Bin": bin.name || "N/A",
           Site: site.name || "N/A",
-          "Total Value (excl. VAT)":
-            gr.receivedItems?.reduce(
-              (sum: number, item: any) =>
-                sum + (item.receivedQuantity || 0) * (item.unitPrice || 0),
-              0,
-            ) || 0,
+          "Total Value (excl. VAT)": round2(receiptValue(gr)),
           "VAT Amount": gr.vatAmount || 0,
           "Total Value (incl. VAT)": gr.totalWithVAT || 0,
           "Evidence Status": gr.evidenceStatus || "N/A",
@@ -2789,7 +2775,7 @@ export default function ComprehensiveReportsPage() {
       // 5. DISPATCHES SHEET WITH VAT
       logger.debug("📝 Creating Dispatches sheet with VAT...");
       const periodDispatches = filterDataByDateRange(
-        rawData.dispatches || [],
+        exportDispatches,
         "dispatchDate",
       );
       // In the exportToExcel function, update the dispatchData mapping:
@@ -2810,11 +2796,11 @@ export default function ComprehensiveReportsPage() {
           "Source Bin": firstBin?.name || "Multiple Bins",
           "Dispatched By": dispatch.dispatchedBy?.name || "N/A",
           "People Fed": dispatch.peopleFed || 0,
-          "Total Cost (excl. VAT)": dispatch.totalCost || 0,
+          "Total Cost (excl. VAT)": round2(dispatchCost(dispatch)),
           "VAT on Cost": dispatch.vatAmount || 0,
           "Total Cost (incl. VAT)": dispatch.totalWithVAT || 0,
           "Cost Per Person": dispatch.costPerPerson || 0,
-          "Total Sales (excl. VAT)": dispatch.totalSales || 0,
+          "Total Sales (excl. VAT)": round2(dispatchSales(dispatch)),
           "VAT on Sales": dispatch.salesVAT || 0,
           "Total Sales (incl. VAT)": dispatch.salesWithVAT || 0,
           "Evidence Status": dispatch.evidenceStatus || "N/A",
@@ -2892,7 +2878,7 @@ export default function ComprehensiveReportsPage() {
       // 7. TRANSFERS SHEET
       logger.debug("📝 Creating Transfers sheet...");
       const periodTransfers = filterDataByDateRange(
-        rawData.transfers || [],
+        filterDataBySite(rawData.transfers || [], siteScope, "transfer"),
         "transferDate",
       );
       const transferData = periodTransfers.map((transfer: any) => ({
@@ -2919,7 +2905,7 @@ export default function ComprehensiveReportsPage() {
       // 8. BIN COUNTS SHEET
       logger.debug("📝 Creating Bin Counts sheet...");
       const periodBinCounts = filterDataByDateRange(
-        rawData.binCounts || [],
+        filterDataBySite(rawData.binCounts || [], siteScope, "binCount"),
         "countDate",
       );
       const binCountData = periodBinCounts.map((count: any) => ({
@@ -3073,8 +3059,8 @@ export default function ComprehensiveReportsPage() {
   }, [
     analyticsData,
     rawData,
+    selectedFilterSite,
     toast,
-    fetchAllData,
     primaryDateRange,
     filterDataByDateRange,
     createFormattedAnalyticsData,
@@ -3860,7 +3846,11 @@ export default function ComprehensiveReportsPage() {
                   colorScheme="green"
                   onClick={exportToExcel}
                   isLoading={exportLoading}
-                  isDisabled={loadErrors.length > 0 || !analyticsData}
+                  isDisabled={
+                    loadErrors.length > 0 ||
+                    !analyticsData ||
+                    Object.keys(rawData).length === 0
+                  }
                   title={
                     loadErrors.length > 0
                       ? "Disabled: some data failed to load, so the export would be incomplete"
