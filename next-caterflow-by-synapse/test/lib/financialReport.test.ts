@@ -1,5 +1,7 @@
 import {
+  anchorFromCounts,
   computeFinancials,
+  isEffectiveCount,
   dispatchSales,
   dispatchSellingPrice,
   effectiveUnitPrice,
@@ -617,5 +619,32 @@ describe("suggestOpeningBalance", () => {
     const s = suggestOpeningBalance({ receipts: [], dispatches: [], counts: [], transfers: [], now });
     expect(s.basis).toBe("none");
     expect(s.asOf).toBeNull();
+  });
+});
+
+describe("anchorFromCounts", () => {
+  const count = (id: string, bin: string, date: string, qty: number, status = "completed") => ({
+    _id: id,
+    status,
+    countDate: date,
+    bin: { _id: bin, site: { _id: "s1" } },
+    countedItems: [{ countedQuantity: qty, unitPrice: 10 }],
+  });
+
+  it("anchors on the latest effective count day before start, one count per bin", () => {
+    const counts = [
+      count("a", "b1", "2026-09-10T00:00:00.000Z", 1),
+      count("b", "b1", "2026-09-30T00:00:00.000Z", 5),
+      count("c", "b2", "2026-09-30T00:00:00.000Z", 3),
+    ].filter(isEffectiveCount);
+    const a = anchorFromCounts(counts, "s1", new Date("2026-10-01T00:00:00.000Z"));
+    expect(a).toMatchObject({ kind: "count", value: 80 });
+    expect(a!.asOf.toISOString()).toBe("2026-10-01T00:00:00.000Z");
+  });
+
+  it("returns null for all-sites or when no count precedes the period", () => {
+    const counts = [count("a", "b1", "2026-09-30T00:00:00.000Z", 5)];
+    expect(anchorFromCounts(counts, null, new Date("2026-10-01"))).toBeNull();
+    expect(anchorFromCounts(counts, "s1", new Date("2026-09-01"))).toBeNull();
   });
 });
