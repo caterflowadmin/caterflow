@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from 'next/dynamic';
 import { fetchRecentThenArchive } from '@/lib/fetchRecentThenArchive';
 import { useState, useEffect, useCallback } from "react";
 import {
@@ -37,7 +38,7 @@ import {
 } from "react-icons/fi";
 import DataTable from "@/app/actions/DataTable";
 import { useSession } from "next-auth/react";
-import GoodsReceiptModal from "@/components/GoodsReceiptModal";
+const GoodsReceiptModal = dynamic(() => import("@/components/GoodsReceiptModal"), { ssr: false });
 import { GoodsReceipt, Reference } from "@/lib/sanityTypes";
 import { resolveUnitPrice } from "@/lib/unitPriceResolver";
 import { v4 as uuidv4 } from "uuid";

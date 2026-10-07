@@ -1,4 +1,5 @@
 "use client";
+import dynamic from 'next/dynamic';
 import { cachedFetch } from '@/lib/clientCache';
 
 import { fetchRecentThenArchive } from '@/lib/fetchRecentThenArchive';
@@ -40,7 +41,7 @@ import {
 } from "react-icons/fi"; // Added missing icons
 import DataTable from "@/app/actions/DataTable";
 import { useSession } from "next-auth/react";
-import CreatePurchaseOrderModal from "@/components/CreatePurchaseOrderModal";
+const CreatePurchaseOrderModal = dynamic(() => import("@/components/CreatePurchaseOrderModal"), { ssr: false });
 import PurchaseOrderModal, {
   PurchaseOrderDetails,
 } from "@/components/PurchaseOrderModal";
@@ -49,8 +50,7 @@ import { StockItem, Category, Site } from "@/lib/sanityTypes";
 import { resolveUnitPrice } from "@/lib/unitPriceResolver";
 import { FaCheck } from "react-icons/fa";
 
-import StockItemSelectorModal from "@/components/StockItemSelectorModal";
-
+const StockItemSelectorModal = dynamic(() => import("@/components/StockItemSelectorModal"), { ssr: false });
 // Interfaces remain the same...
 interface PurchaseOrderItem {
   stockItem: string;

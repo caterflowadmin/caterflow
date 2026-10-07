@@ -1,4 +1,5 @@
 "use client";
+import dynamic from 'next/dynamic';
 import { cachedFetch } from '@/lib/clientCache';
 
 import { logger } from '@/lib/logger';
@@ -29,7 +30,7 @@ import {
 } from "@chakra-ui/react";
 import { FiPlus, FiSearch, FiFilter, FiEdit } from "react-icons/fi";
 import DataTable, { Column } from "@/components/DataTable";
-import UserManagementModal from "@/components/UserManagementModal";
+const UserManagementModal = dynamic(() => import("@/components/UserManagementModal"), { ssr: false });
 import { AppUser, Site, Reference } from "@/lib/sanityTypes";
 import { useSession } from "next-auth/react";
 

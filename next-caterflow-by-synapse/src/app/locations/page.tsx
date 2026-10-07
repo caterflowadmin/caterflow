@@ -1,4 +1,5 @@
 'use client';
+import dynamic from 'next/dynamic';
 import { cachedFetch } from '@/lib/clientCache';
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -22,9 +23,8 @@ import {
 import DataTable, { Column } from '@/components/DataTable';
 import { EditIcon } from '@chakra-ui/icons';
 import { useSession } from 'next-auth/react'
-import SiteModal from '@/components/SiteModal';
-import BinModal from '@/components/BinModal';
-
+const SiteModal = dynamic(() => import('@/components/SiteModal'), { ssr: false });
+const BinModal = dynamic(() => import('@/components/BinModal'), { ssr: false });
 // Interfaces for data types
 interface Bin {
     _id: string;

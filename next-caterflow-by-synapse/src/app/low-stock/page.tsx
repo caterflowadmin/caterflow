@@ -1,5 +1,6 @@
 // src/app/low-stock/page.tsx
 "use client";
+import dynamic from 'next/dynamic';
 import { cachedFetch } from '@/lib/clientCache';
 import { logger } from '@/lib/logger';
 
@@ -62,7 +63,7 @@ import {
 } from "react-icons/fi";
 import { MdOutlineLowPriority } from "react-icons/md";
 import DataTable, { Column } from "@/components/DataTable";
-import CreatePurchaseOrderModal from "@/components/CreatePurchaseOrderModal";
+const CreatePurchaseOrderModal = dynamic(() => import("@/components/CreatePurchaseOrderModal"), { ssr: false });
 import { Site, Supplier, StockItem } from "@/lib/sanityTypes";
 import { calculateBulkStock } from "@/lib/stockCalculations";
 import { resolveUnitPrice } from "@/lib/unitPriceResolver";
