@@ -61,7 +61,7 @@ interface FinancialSummaryProps {
   /** Opens the item-level reconciliation (admin / auditor, all-sites view). */
   onReconcile?: () => void;
   /** Where opening stock came from, if a closed period / opening balance was used. */
-  anchoredOn?: { kind: "close" | "opening-balance"; asOf: string } | null;
+  anchoredOn?: { kind: "close" | "opening-balance" | "count"; asOf: string } | null;
   /** Extra controls rendered at the bottom (period close). */
   footer?: React.ReactNode;
 }
@@ -249,7 +249,11 @@ export default function FinancialSummary({
           <AlertDescription>
             {anchoredOn
               ? `Opening stock continues from the ${
-                  anchoredOn.kind === "close" ? "closed period" : "recorded opening balance"
+                  anchoredOn.kind === "close"
+                    ? "closed period"
+                    : anchoredOn.kind === "count"
+                      ? "latest stock count"
+                      : "recorded opening balance"
                 } at ${safeDate(anchoredOn.asOf)}. `
               : "Opening stock continues from the previous period. "}
             No data-quality problems were detected.

@@ -29,7 +29,7 @@ export interface IntegrityIssue {
  * `asOf` are covered by the anchor and are not re-summed.
  */
 export interface LedgerAnchor {
-  kind: "close" | "opening-balance";
+  kind: "close" | "opening-balance" | "count";
   /** Ledger resumes at this instant (documents dated >= asOf are summed on top). */
   asOf: Date;
   /** Stock value at `asOf`. */
@@ -304,6 +304,58 @@ const before = (value: unknown, start: Date): boolean => {
   return Number.isFinite(t) && t < start.getTime();
 };
 
+/**
+ * Opening anchor from the facility's latest stock count before `start`.
+ * Takes every effective count on the most recent count day (one per bin, last
+ * wins), values counted quantity x unit price, and treats the count as an
+ * end-of-day figure so documents from the next day on are summed on top.
+ */
+export function anchorFromCounts(
+  counts: any[],
+  siteId: string | null | undefined,
+  start: Date,
+): LedgerAnchor | null {
+  if (!siteId || siteId === "all") return null;
+  const day = (v: unknown) => new Date(timeOf(v)).toISOString().slice(0, 10);
+  const eligible = counts.filter((c) => {
+    const t = timeOf(c.countDate ?? c.createdAt);
+    return (
+      Number.isFinite(t) &&
+      t < start.getTime() &&
+      (c.bin?.site?._id || c.bin?.site) === siteId &&
+      (c.countedItems || []).length > 0
+    );
+  });
+  if (!eligible.length) return null;
+  const latestDay = eligible.reduce(
+    (m, c) => (day(c.countDate ?? c.createdAt) > m ? day(c.countDate ?? c.createdAt) : m),
+    "",
+  );
+  const perBin = new Map<string, any>();
+  for (const c of eligible) {
+    if (day(c.countDate ?? c.createdAt) !== latestDay) continue;
+    perBin.set(c.bin?._id || c.bin?._ref || c._id, c);
+  }
+  const value = [...perBin.values()].reduce(
+    (sum, c) =>
+      sum +
+      (c.countedItems || []).reduce(
+        (s: number, i: any) =>
+          s +
+          num(i.countedQuantity) *
+            effectiveUnitPrice(i.unitPrice, i.stockItem?.unitPrice),
+        0,
+      ),
+    0,
+  );
+  const nextDay = new Date(`${latestDay}T00:00:00.000Z`).getTime() + 86_400_000;
+  return {
+    kind: "count",
+    asOf: new Date(Math.min(nextDay, start.getTime())),
+    value: round2(value),
+  };
+}
+
 // ─── Main entry point ──────────────────────────────────────────────────────────
 
 export function computeFinancials(input: FinancialInput): FinancialResult {
@@ -321,10 +373,18 @@ export function computeFinancials(input: FinancialInput): FinancialResult {
   const transfers = transfersAll.filter(isEffectiveTransfer);
 
   // ── Opening: anchor value (if any) + everything between the anchor and the period start ──
-  const anchor =
+  const explicitAnchor =
     input.anchor && input.anchor.asOf.getTime() <= range.start.getTime()
       ? input.anchor
       : null;
+  // Latest facility stock count wins when it is newer than any closed period /
+  // opening balance, so opening stock never reaches back further than needed.
+  const countAnchor = anchorFromCounts(counts, siteId, range.start);
+  const anchor =
+    countAnchor &&
+    (!explicitAnchor || countAnchor.asOf.getTime() > explicitAnchor.asOf.getTime())
+      ? countAnchor
+      : explicitAnchor;
   const anchorMs = anchor ? anchor.asOf.getTime() : -Infinity;
   const afterAnchor = (value: unknown): boolean => {
     const t = timeOf(value);
