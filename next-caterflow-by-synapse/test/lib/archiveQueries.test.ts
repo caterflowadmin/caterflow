@@ -6,17 +6,23 @@
 // constantly-mutating row, and (since its kind isn't exactly "cleanup")
 // rendered as an "Archive" run in the admin UI instead of "Delete".
 
-jest.mock("@/lib/mongoClient", () => ({
-  getArchiveDb: jest.fn(),
-  COLLECTIONS: {
-    ARCHIVE_RUNS: "archive_runs",
-    STOCK_BASELINES: "stock_baselines",
-    DISPATCH_LOGS: "dispatch_logs",
-    GOODS_RECEIPTS: "goods_receipts",
-    INVENTORY_COUNTS: "inventory_counts",
-    INTERNAL_TRANSFERS: "internal_transfers",
-  },
-}));
+jest.mock("@/lib/mongoClient", () => {
+  const getArchiveDb = jest.fn();
+  return {
+    getArchiveDb,
+    // archiveQueries reads through the fail-fast variant; share the same mock.
+    getArchiveDbFailFast: (...args: unknown[]) =>
+      (getArchiveDb as any)(...args),
+    COLLECTIONS: {
+      ARCHIVE_RUNS: "archive_runs",
+      STOCK_BASELINES: "stock_baselines",
+      DISPATCH_LOGS: "dispatch_logs",
+      GOODS_RECEIPTS: "goods_receipts",
+      INVENTORY_COUNTS: "inventory_counts",
+      INTERNAL_TRANSFERS: "internal_transfers",
+    },
+  };
+});
 
 // archiveQueries.ts's getLatestStockBaseline() now imports
 // reconstructStockBaselineChain from archiveService.ts, which transitively

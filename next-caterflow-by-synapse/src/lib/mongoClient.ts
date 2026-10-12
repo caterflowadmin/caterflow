@@ -40,6 +40,10 @@ const mongoOptions: MongoClientOptions = {
     serverSelectionTimeoutMS: 8000,
     connectTimeoutMS: 5000,
     socketTimeoutMS: 12000,
+    // Serverless instances are frozen between invocations; sockets idle across a
+    // freeze come back dead and the first operation then times out. Recycle idle
+    // connections quickly so a thawed instance reconnects instead of reusing one.
+    maxIdleTimeMS: 15000,
     retryWrites: true,
     retryReads: true,
 };
@@ -52,8 +56,24 @@ declare global {
     var _mongoClientPromise: Promise<MongoClient> | undefined;
 }
 
+// ── Fail-fast circuit breaker (read paths only) ────────────────────────────
+// When Atlas is unreachable every list request used to wait the full
+// serverSelection/connect timeout (~8s) before falling back to Sanity-only data.
+// After a failure we skip Mongo for a short cooldown so those requests return
+// immediately; the archive job keeps using getArchiveDb() and is unaffected.
+const BREAKER_COOLDOWN_MS = 30_000;
+let breakerOpenUntil = 0;
+
+function tripBreaker() {
+    breakerOpenUntil = Date.now() + BREAKER_COOLDOWN_MS;
+}
+
 function createClientPromise(): Promise<MongoClient> {
     const newClient = new MongoClient(uri, mongoOptions);
+    // Network-level trouble (pool cleared / failed heartbeat) also opens the
+    // breaker, covering operation timeouts that happen after connect succeeded.
+    newClient.on('connectionPoolCleared', tripBreaker);
+    newClient.on('serverHeartbeatFailed', tripBreaker);
     const promise = newClient.connect();
     // A connect() failure before anything awaits this promise (e.g. a
     // cold start hitting a struggling Atlas cluster) is otherwise an
@@ -67,14 +87,12 @@ function createClientPromise(): Promise<MongoClient> {
 }
 
 if (uri) {
-    if (process.env.NODE_ENV === 'development') {
-        if (!global._mongoClientPromise) {
-            global._mongoClientPromise = createClientPromise();
-        }
-        clientPromise = global._mongoClientPromise;
-    } else {
-        clientPromise = createClientPromise();
+    // Cache on globalThis in every environment so hot-reloads / duplicate module
+    // instances within one serverless container never open a second pool.
+    if (!global._mongoClientPromise) {
+        global._mongoClientPromise = createClientPromise();
     }
+    clientPromise = global._mongoClientPromise;
 }
 
 export default clientPromise;
@@ -88,7 +106,7 @@ export async function getArchiveDb(): Promise<Db> {
     }
     if (!clientPromise) {
         clientPromise = createClientPromise();
-        if (process.env.NODE_ENV === 'development') global._mongoClientPromise = clientPromise;
+        global._mongoClientPromise = clientPromise;
     }
     try {
         const mongoClient = await clientPromise;
@@ -106,9 +124,22 @@ export async function getArchiveDb(): Promise<Db> {
         // means the NEXT call gets a fresh connection attempt instead of
         // an instant, permanent failure.
         clientPromise = null;
-        if (process.env.NODE_ENV === 'development') global._mongoClientPromise = undefined;
+        global._mongoClientPromise = undefined;
+        tripBreaker();
         throw err;
     }
+}
+
+/**
+ * Same as getArchiveDb() but throws immediately while the breaker is open.
+ * Use on request paths that can degrade gracefully (list endpoints merging
+ * archive data); NOT for the archive job itself.
+ */
+export async function getArchiveDbFailFast(): Promise<Db> {
+    if (Date.now() < breakerOpenUntil) {
+        throw new Error('MongoDB archive temporarily unavailable (circuit open)');
+    }
+    return getArchiveDb();
 }
 
 /**

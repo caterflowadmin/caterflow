@@ -299,7 +299,7 @@ export default function ProcurementPage() {
   const fetchApprovedPOs = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/purchase-orders?status=approved");
+      const response = await fetch("/api/purchase-orders?status=approved&archived=false");
       if (!response.ok) throw new Error("Failed to fetch purchase orders");
       const data = await response.json();
       setPurchaseOrders(data);
