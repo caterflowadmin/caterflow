@@ -1,4 +1,5 @@
 // src/app/api/attachments/route.ts
+import { mergeById } from "@/lib/financialReport";
 import { NextRequest, NextResponse } from "next/server";
 import { client } from "@/lib/sanity";
 import { groq } from "next-sanity";
@@ -55,7 +56,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const merged = [...attachments, ...archivedAttachments].sort(
+    const merged = mergeById(attachments, archivedAttachments).sort(
       (a, b) =>
         new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime(),
     );
