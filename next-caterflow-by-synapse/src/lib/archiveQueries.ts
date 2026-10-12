@@ -1,7 +1,7 @@
 // src/lib/archiveQueries.ts
 // MongoDB query helpers for fetching archived data — used by the API routes
 
-import { getArchiveDb, COLLECTIONS } from "@/lib/mongoClient";
+import { getArchiveDbFailFast as getArchiveDb, COLLECTIONS } from "@/lib/mongoClient";
 import { reconstructStockBaselineChain } from "@/lib/archiveService";
 import type { Filter } from "mongodb";
 

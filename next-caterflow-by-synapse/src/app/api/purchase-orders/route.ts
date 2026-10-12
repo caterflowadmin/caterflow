@@ -208,7 +208,17 @@ export async function GET(request: Request) {
                 canAccessMultipleSites: userSiteInfo.canAccessMultipleSites,
                 status: status || undefined,
             });
-            archivedOrders = raw.map(o => ({
+            // Mongo copies are snapshots; while the Sanity original still exists it is
+            // authoritative (e.g. an order just moved approved -> processed must not
+            // reappear under ?status=approved from its stale archive copy).
+            // Without a status filter the Sanity list already contains every live doc;
+            // with one, fetch the (cheap, ids-only) full live set so no stale copy slips by.
+            const liveIds = new Set<string>(
+                status
+                    ? await client.fetch(groq`*[_type == "PurchaseOrder"]._id`)
+                    : processedOrders.map((o: any) => o._id),
+            );
+            archivedOrders = raw.filter(o => !liveIds.has(o._sanityId || o._id?.toString())).map(o => ({
                 ...o,
                 _id: o._sanityId || o._id?.toString(),
                 _isArchived: true,
