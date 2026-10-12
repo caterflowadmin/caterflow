@@ -208,7 +208,16 @@ export async function GET(request: Request) {
                 canAccessMultipleSites: userSiteInfo.canAccessMultipleSites,
                 status: status || undefined,
             });
-            archivedOrders = raw.map(o => ({
+            // Mongo copies are snapshots; while the Sanity original still exists it is
+            // authoritative (e.g. an order just moved approved -> processed must not
+            // reappear under ?status=approved from its stale archive copy).
+            const archivedIds = raw.map(o => o._sanityId || o._id?.toString()).filter(Boolean);
+            const liveIds = new Set<string>(
+                archivedIds.length
+                    ? await client.fetch(groq`*[_type == "PurchaseOrder" && _id in $ids]._id`, { ids: archivedIds })
+                    : [],
+            );
+            archivedOrders = raw.filter(o => !liveIds.has(o._sanityId || o._id?.toString())).map(o => ({
                 ...o,
                 _id: o._sanityId || o._id?.toString(),
                 _isArchived: true,
