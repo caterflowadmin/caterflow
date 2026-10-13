@@ -65,7 +65,7 @@ import { MdOutlineLowPriority } from "react-icons/md";
 import DataTable, { Column } from "@/components/DataTable";
 const CreatePurchaseOrderModal = dynamic(() => import("@/components/CreatePurchaseOrderModal"), { ssr: false });
 import { Site, Supplier, StockItem } from "@/lib/sanityTypes";
-import { calculateBulkStock } from "@/lib/stockCalculations";
+import { fetchBulkStock as calculateBulkStock } from "@/lib/stockClient";
 import { resolveUnitPrice } from "@/lib/unitPriceResolver";
 
 interface LowStockItem extends StockItem {

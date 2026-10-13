@@ -56,7 +56,7 @@ import {
 const StockItemSelectorModal = dynamic(() => import("./StockItemSelectorModal"), { ssr: false });
 import { nanoid } from "nanoid";
 import { useSession } from "next-auth/react";
-import { getBinStock } from "@/lib/stockCalculations";
+import { fetchBinStock as getBinStock } from "@/lib/stockClient";
 
 interface TransferredItem {
   _key: string;
