@@ -72,7 +72,7 @@ const FileUploadModal = dynamic(() => import("./FileUploadModal"), { ssr: false 
 import { nanoid } from "nanoid";
 import { useSession } from "next-auth/react";
 
-import { urlFor } from "@/lib/sanity";
+import { urlFor } from "@/lib/sanityImage";
 
 interface DispatchedItem {
   _key: string;

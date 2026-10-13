@@ -16,8 +16,7 @@ import {
     useColorModeValue,
     Spinner,
 } from '@chakra-ui/react';
-import { client } from '@/lib/sanity';
-import { groq } from 'next-sanity';
+import { cachedFetch } from '@/lib/clientCache';
 import DataTable, { Column } from '@/components/DataTable';
 import { useRouter } from 'next/navigation';
 const StockItemModal = dynamic(() => import('@/components/StockItemModal'), { ssr: false });
@@ -29,7 +28,7 @@ interface StockItem {
     name: string;
     sku: string;
     minimumStockLevel: number;
-    quantityInStock: number;
+    quantityInStock?: number;
     category: {
         _id: string;
         title: string;
@@ -66,23 +65,11 @@ export default function InventoryPage() {
 
     // FIX: Memoize fetchStockItems to avoid unnecessary re-renders
     const fetchStockItems = useCallback(async () => {
-        const query = groq`
-            *[_type == "StockItem"]{
-                _id,
-                name,
-                sku,
-                minimumStockLevel,
-                quantityInStock,
-                "category": category->{_id, title},
-                "suppliers": suppliers[]->{_id, name},
-                "primarySupplier": primarySupplier->{_id, name},
-                unitOfMeasure,
-                unitPrice
-            }
-        `;
         try {
             setLoading(true);
-            const data = await client.fetch(query);
+            const res = await cachedFetch('/api/stock-items');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
             setStockItems(data);
         } catch (error) {
             console.error("Failed to fetch stock items:", error);
@@ -111,7 +98,8 @@ export default function InventoryPage() {
     const handleDelete = async (item: StockItem) => {
         if (confirm(`Are you sure you want to delete "${item.name}"?`)) {
             try {
-                await client.delete(item._id);
+                const res = await fetch(`/api/stock-items/${item._id}`, { method: 'DELETE' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 toast({
                     title: "Success",
                     description: "Item deleted successfully",

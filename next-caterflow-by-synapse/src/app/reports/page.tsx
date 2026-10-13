@@ -96,7 +96,7 @@ import {
   parseISO,
   isWithinInterval,
 } from "date-fns";
-import { calculateBulkStock } from "@/lib/stockCalculations";
+import { fetchBulkStock as calculateBulkStock } from "@/lib/stockClient";
 import { resolveUnitPrice } from "@/lib/unitPriceResolver";
 import {
   parseDateRangeBoundary,

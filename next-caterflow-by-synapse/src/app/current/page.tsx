@@ -61,10 +61,7 @@ import {
 import { MdOutlineSort } from "react-icons/md";
 import DataTable, { Column } from "./DataTable";
 import { Site, StockItem } from "@/lib/sanityTypes";
-import {
-  calculateBulkStock,
-  emergencyRecalculateAllStock,
-} from "@/lib/stockCalculations";
+import { fetchBulkStock as calculateBulkStock } from "@/lib/stockClient";
 
 import { useDisclosure } from "@chakra-ui/react";
 const CalculationsModal = dynamic(() => import("@/components/CalculationsModal"), { ssr: false });
