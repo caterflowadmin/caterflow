@@ -32,6 +32,7 @@ Verified: `tsc` clean, 209 unit tests pass, production build succeeds and every 
 | 3.2 Shared client fetch layer | Done as `cachedFetch` (dedupe + TTL + auto-invalidate); prefetch on hover/touch; removed no-op global loading flag |
 | 3.3 Optimistic UI, 3.4 virtualised tables | NOT done |
 | 3.5 Pause polling when hidden | Done |
+| 4a Browser no longer imports the server stock engine / Sanity client | Done: `/api/stock/bulk` + `lib/stockClient.ts`; `lib/sanityImage.ts`; admin and stock-items pages use API routes. First-load JS: /current 291→229 kB, /low-stock 295→233, /reports 321→259, /stock-items 236→197, /admin 226→188. Also fixes silent failures: browser stock backfill writes and stock-item delete had no write token. |
 | 4 Bundles | `optimizePackageImports`; service worker no longer caches `/api` (stale / cross-user data risk). Heavy libs were already lazy. Dependency pruning NOT done |
 | 5 Guardrails | README conventions + tests added. CI perf budgets, rate limits, Sanity request timeouts NOT done (a blanket timeout risked breaking archive exports) |
 

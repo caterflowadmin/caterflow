@@ -21,8 +21,7 @@ import {
   Th,
   Td,
 } from '@chakra-ui/react';
-import { client } from '@/lib/sanity';
-import { groq } from 'next-sanity';
+import { cachedFetch } from '@/lib/clientCache';
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation';
 import { FiEdit } from 'react-icons/fi';
@@ -66,26 +65,12 @@ export default function AdminPage() {
   const fetchData = useCallback(async () => {
     setIsLoadingData(true);
     try {
-      const usersQuery = groq`
-        *[_type == "AppUser"]{
-          _id,
-          name,
-          email,
-          role,
-          associatedSite->{_id, name}
-        }
-      `;
-      const sitesQuery = groq`
-        *[_type == "Site"]{
-          _id,
-          name
-        }
-      `;
-
-      const [usersData, sitesData] = await Promise.all([
-        client.fetch(usersQuery),
-        client.fetch(sitesQuery)
+      const [usersRes, sitesRes] = await Promise.all([
+        fetch('/api/users'),
+        cachedFetch('/api/sites'),
       ]);
+      if (!usersRes.ok || !sitesRes.ok) throw new Error('Failed to load admin data');
+      const [usersData, sitesData] = await Promise.all([usersRes.json(), sitesRes.json()]);
 
       const usersWithSiteNames = usersData.map((u: any) => ({
         ...u,

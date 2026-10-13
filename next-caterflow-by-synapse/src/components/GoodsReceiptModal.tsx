@@ -73,7 +73,7 @@ import {
   getInvoiceDisplayInfo,
 } from "@/lib/invoiceUtils";
 import { FiChevronUp, FiChevronDown, FiTrash2 } from "react-icons/fi";
-import { urlFor } from "@/lib/sanity";
+import { urlFor } from "@/lib/sanityImage";
 
 // Update the ReceivedItemData interface
 interface ReceivedItemData {
